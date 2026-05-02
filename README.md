@@ -1,6 +1,3 @@
-<<<<<<< Updated upstream
-
-=======
 # Bagol Repo
 
 Nuvio providers by kraptor.
@@ -35,4 +32,3 @@ providers/   ← bundled JS files (ready to use)
 src/         ← source files
 manifest.json
 ```
->>>>>>> Stashed changes
