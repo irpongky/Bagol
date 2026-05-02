@@ -3,20 +3,21 @@
 // Extractors: DoodStream, Filemoon, LuluStream, Player4Me, VidNest
 
 const cheerio = require("cheerio-without-node-native");
+const CryptoJS = require("crypto-js");
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 const BASE_URL = "https://mangoporn.net";
-const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0";
+const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
-// ── Blocked keywords (from original Kotlin filter) ───────────────────────────
+// ── Blocked keywords ──────────────────────────────────────────────────────────
 const BLOCKED_WORDS = [
   "gay","homosexual","queer","homo","androphile","femboy","feminine boy","effeminate",
   "trap","scat","trans","Trade","Vers","Twink","Otter","Bear","Femme","Masc",
   "Pegging","Femdom","futa","tranny","crossdress","Bisexual","Intersex","LGBTQ",
   "tgirl","t-girl","Transsexual","TS","TGirl","T-Boy"
 ];
-const BLOCKED_RE = new RegExp(
+var BLOCKED_RE = new RegExp(
   "(?:" + BLOCKED_WORDS.map(function(w){ return w.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"); }).join("|") + ")",
   "i"
 );
@@ -25,7 +26,11 @@ function isBlocked(title) { return BLOCKED_RE.test(title); }
 // ── HTTP ──────────────────────────────────────────────────────────────────────
 function fetchText(url, extraHeaders) {
   return fetch(url, {
-    headers: Object.assign({ "User-Agent": UA }, extraHeaders || {})
+    headers: Object.assign({
+      "User-Agent": UA,
+      "Accept": "text/html,application/xhtml+xml,*/*",
+      "Accept-Language": "en-US,en;q=0.9"
+    }, extraHeaders || {})
   }).then(function(r) {
     if (!r.ok) throw new Error("HTTP " + r.status + " " + url);
     return r.text();
@@ -41,156 +46,196 @@ function fixUrl(href, base) {
   return (base || BASE_URL) + "/" + href;
 }
 
+// ── p,a,c,k,e,d JS Unpacker ───────────────────────────────────────────────────
+// Needed for Streamwish, Filemoon, Vidhidepro, LuluStream, etc.
+function unpackPacked(src) {
+  if (src.indexOf("eval(function(p,a,c,k,e,") === -1) return src;
+  try {
+    // Extract: ('payload', base, count, 'k1|k2|k3'.split('|'), 0, {})
+    var m = src.match(/\('([\s\S]*?)',\s*(\d+),\s*(\d+),\s*'([\s\S]*?)'\.split\('([|]?)'\)/);
+    if (!m) return src;
+    var p    = m[1];
+    var base = parseInt(m[2], 10);
+    var keys = m[4].split(m[5] || "|");
+    return p.replace(/\b\w+\b/g, function(word) {
+      var n = parseInt(word, base);
+      return (n >= 0 && n < keys.length && keys[n] !== "") ? keys[n] : word;
+    });
+  } catch(e) { return src; }
+}
+
+// Tries all <script> tags: unpacks if packed, then applies finder fn
+function findInScripts($, finderFn) {
+  var result = null;
+  $("script").each(function(_, el) {
+    if (result) return false;
+    var raw = $(el).html() || "";
+    var txt = unpackPacked(raw);
+    var found = finderFn(txt, raw);
+    if (found) { result = found; return false; }
+  });
+  return result;
+}
+
 // ── TMDB ──────────────────────────────────────────────────────────────────────
 function getTmdbTitle(tmdbId, mediaType) {
-  const url = "https://api.themoviedb.org/3/" + mediaType + "/" + tmdbId
-            + "?api_key=" + TMDB_API_KEY + "&language=en-US";
-  return fetch(url)
+  var url = "https://api.themoviedb.org/3/" + mediaType + "/" + tmdbId
+          + "?api_key=" + TMDB_API_KEY + "&language=en-US";
+  return fetch(url, { headers: { "User-Agent": UA } })
     .then(function(r) { return r.ok ? r.json() : null; })
     .then(function(d) { return d ? (d.title || d.name || null) : null; })
     .catch(function() { return null; });
 }
 
-// ── Extractors ────────────────────────────────────────────────────────────────
-
+// ── Extractor: DoodStream ─────────────────────────────────────────────────────
 function extractDoodStream(url) {
-  var embedUrl = url.replace("doply.net", "myvidplay.com");
-  var refHost = "https://myvidplay.com";
-  return fetchText(embedUrl, { Referer: refHost })
+  var host = url.includes("myvidplay.com") ? "https://myvidplay.com"
+           : url.includes("doply.net")     ? "https://doply.net"
+           : "https://dood.pm";
+  return fetchText(url, { Referer: host })
     .then(function(html) {
-      var m = html.match(/\/pass_md5\/([^/]*)\/([^/']*)/);
+      var m = html.match(/\/pass_md5\/([^/]+)\/([^'"\s]+)/);
       if (!m) return null;
-      var fullPath = m[0], expiry = m[1], token = m[2];
-      return fetchText(refHost + fullPath, { Referer: embedUrl })
+      var passPath = m[0], token = m[2], expiry = m[1];
+      return fetchText(host + passPath, { Referer: url })
         .then(function(base) {
           base = base.trim();
-          var directUrl = (token && expiry) ? base + "?token=" + token + "&expiry=" + expiry + "000" : base;
-          return [{ name: "DoodStream", title: "DoodStream", url: directUrl, quality: "auto",
-                    headers: { "User-Agent": UA, Referer: refHost } }];
+          var videoUrl = base + "?token=" + token + "&expiry=" + expiry + "000";
+          return [{ name: "DoodStream", title: "DoodStream", url: videoUrl, quality: "auto",
+                    headers: { "User-Agent": UA, Referer: host } }];
         });
     })
-    .catch(function() { return null; });
+    .catch(function(e) { console.log("[Mangoporn] DoodStream error: " + e.message); return null; });
 }
 
-function extractLuluStream(url) {
-  var embedUrl = url.replace("/d/", "/e/");
-  var host = new URL(embedUrl).host;
-  var origin = "https://" + host;
-  return fetchText(embedUrl, { Referer: url, Origin: origin })
-    .then(function(html) {
-      var m = html.match(/["']([^"']+\.m3u8[^"']*)["']/);
-      if (!m) return null;
-      return [{ name: "LuluStream", title: "LuluStream", url: m[1], quality: "auto",
-                headers: { Referer: embedUrl, Origin: origin } }];
-    })
-    .catch(function() { return null; });
-}
-
-function extractVidNest(url) {
-  return fetchText(url, { Referer: "https://vidnest.io/" })
-    .then(function(html) {
-      var fm = html.match(/file\s*:\s*["']([^"']+\.mp4[^"']*)["']/);
-      var lm = html.match(/label\s*:\s*["']([^"']+)["']/);
-      if (!fm) return null;
-      var quality = lm ? lm[1] : "auto";
-      return [{ name: "VidNest", title: "VidNest " + quality, url: fm[1], quality: quality,
-                headers: { "User-Agent": UA, Referer: "https://vidnest.io/", Origin: "https://vidnest.io" } }];
-    })
-    .catch(function() { return null; });
-}
-
-function b64ToBytes(str) {
-  var b64 = str.replace(/-/g, "+").replace(/_/g, "/");
-  var pad = b64.length % 4 ? "=".repeat(4 - (b64.length % 4)) : "";
-  return Uint8Array.from(atob(b64 + pad), function(c){ return c.charCodeAt(0); });
-}
-
+// ── Extractor: Filemoon ───────────────────────────────────────────────────────
+// Filemoon uses packed JS. After unpacking: sources:[{file:"...m3u8",...}]
 function extractFilemoon(url) {
-  var m = url.match(/\/(?:e|d|v|f|download)\/([0-9a-zA-Z]+)/);
-  var id = m ? m[1] : url.split("/").pop().split("?")[0];
-  var host = new URL(url).host;
-  var rootRef = "https://" + host + "/";
-  return fetchText("https://" + host + "/api/videos/" + id + "/embed/playback", {
-    Referer: rootRef, Origin: "https://" + host, "X-Requested-With": "XMLHttpRequest"
-  })
-  .then(function(resp) {
-    var json = JSON.parse(resp);
-    if (json.sources && json.sources.length) {
-      return json.sources.map(function(s) {
-        return { name: "Filemoon", title: "Filemoon " + (s.label || ""), url: s.url,
-                 quality: s.label || "auto", headers: { Referer: rootRef } };
+  var host = new URL(url).origin;
+  return fetchText(url, { Referer: BASE_URL + "/", Origin: host })
+    .then(function(html) {
+      var $ = cheerio.load(html);
+      // Try packed scripts first
+      var fileUrl = findInScripts($, function(unpacked) {
+        // Look for sources:[{file:"...",...}] or jwplayer sources
+        var m = unpacked.match(/sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/i);
+        if (!m) m = unpacked.match(/["']file["']\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/i);
+        return m ? m[1] : null;
       });
-    }
-    if (!json.playback) return null;
-    var pb = json.playback;
-    var allBytes = [];
-    pb.key_parts.forEach(function(part) {
-      b64ToBytes(part).forEach(function(b){ allBytes.push(b); });
-    });
-    var keyBytes = new Uint8Array(allBytes);
-    return crypto.subtle.importKey("raw", keyBytes, { name: "AES-GCM" }, false, ["decrypt"])
-      .then(function(key) {
-        return crypto.subtle.decrypt(
-          { name: "AES-GCM", iv: b64ToBytes(pb.iv), tagLength: 128 },
-          key, b64ToBytes(pb.payload)
-        );
-      })
-      .then(function(dec) {
-        var sources = JSON.parse(new TextDecoder("iso-8859-1").decode(dec)).sources;
-        if (!sources || !sources.length) return null;
-        return sources.map(function(s) {
-          return { name: "Filemoon", title: "Filemoon " + (s.label || ""), url: s.url,
-                   quality: s.label || "auto", headers: { Referer: rootRef } };
-        });
-      });
-  })
-  .catch(function() { return null; });
+      if (!fileUrl) return null;
+      return [{ name: "Filemoon", title: "Filemoon", url: fileUrl, quality: "auto",
+                headers: { Referer: host + "/", Origin: host } }];
+    })
+    .catch(function(e) { console.log("[Mangoporn] Filemoon error: " + e.message); return null; });
 }
 
+// ── Extractor: LuluStream ─────────────────────────────────────────────────────
+function extractLuluStream(url) {
+  var host = new URL(url).origin;
+  return fetchText(url, { Referer: BASE_URL + "/", Origin: host })
+    .then(function(html) {
+      var $ = cheerio.load(html);
+      var fileUrl = findInScripts($, function(unpacked) {
+        var m = unpacked.match(/sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i);
+        if (!m) m = unpacked.match(/file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i);
+        return m ? m[1] : null;
+      });
+      if (!fileUrl) return null;
+      return [{ name: "LuluStream", title: "LuluStream", url: fileUrl, quality: "auto",
+                headers: { Referer: host + "/", Origin: host } }];
+    })
+    .catch(function(e) { console.log("[Mangoporn] LuluStream error: " + e.message); return null; });
+}
+
+// ── Extractor: VidNest ────────────────────────────────────────────────────────
+function extractVidNest(url) {
+  var host = new URL(url).origin;
+  return fetchText(url, { Referer: BASE_URL + "/" })
+    .then(function(html) {
+      var $ = cheerio.load(html);
+      var fileUrl = findInScripts($, function(unpacked) {
+        var m = unpacked.match(/sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/i);
+        if (!m) m = unpacked.match(/file\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/i);
+        return m ? m[1] : null;
+      });
+      if (!fileUrl) return null;
+      return [{ name: "VidNest", title: "VidNest", url: fileUrl, quality: "auto",
+                headers: { Referer: host + "/", Origin: host } }];
+    })
+    .catch(function(e) { console.log("[Mangoporn] VidNest error: " + e.message); return null; });
+}
+
+// ── Extractor: Player4Me ──────────────────────────────────────────────────────
+// AES-CBC key="kiemtienmua911ca" iv="1234567890oiuytr"
+// Uses crypto-js (available in Nuvio)
 function extractPlayer4Me(url) {
   var urlObj = new URL(url);
-  var mainUrl = urlObj.origin;
-  var id = url.indexOf("#") !== -1 ? url.split("#")[1] : urlObj.pathname.split("/").pop();
-  return fetchText(mainUrl + "/api/v1/video?id=" + id, {
-    Host: urlObj.host, Accept: "*/*", Cookie: "popunderCount/=1", Referer: mainUrl + "/"
+  var host = urlObj.origin;
+  var id = url.indexOf("#") !== -1 ? url.split("#")[1]
+          : urlObj.pathname.replace(/\//g,"").split("?")[0];
+  return fetchText(host + "/api/v1/video?id=" + id, {
+    Host: urlObj.host, Accept: "*/*", Cookie: "popunderCount/=1", Referer: host + "/"
   })
   .then(function(raw) {
     raw = raw.trim();
-    if (!raw || raw.startsWith("<html>")) return null;
-    var enc = new TextEncoder();
-    return crypto.subtle.importKey("raw", enc.encode("kiemtienmua911ca"), { name: "AES-CBC" }, false, ["decrypt"])
-      .then(function(key) {
-        return crypto.subtle.decrypt({ name: "AES-CBC", iv: enc.encode("1234567890oiuytr") }, key, b64ToBytes(raw));
-      })
-      .then(function(dec) {
-        var data = JSON.parse(new TextDecoder().decode(dec));
-        var videoUrl = data.source || data.hls || data.cf;
-        if (!videoUrl) return null;
-        return [{ name: "Player4Me", title: "Player4Me", url: videoUrl, quality: "auto",
-                  headers: { "User-Agent": UA, Referer: mainUrl + "/" } }];
+    if (!raw || raw.charAt(0) === "<") return null;
+    try {
+      var key = CryptoJS.enc.Utf8.parse("kiemtienmua911ca");
+      var iv  = CryptoJS.enc.Utf8.parse("1234567890oiuytr");
+      var dec = CryptoJS.AES.decrypt(raw, key, {
+        iv: iv,
+        mode: CryptoJS.mode.CBC,
+        padding: CryptoJS.pad.Pkcs7
       });
+      var data = JSON.parse(dec.toString(CryptoJS.enc.Utf8));
+      var videoUrl = data.source || data.hls || data.cf || (data.sources && data.sources[0] && data.sources[0].file);
+      if (!videoUrl) return null;
+      return [{ name: "Player4Me", title: "Player4Me", url: videoUrl, quality: "auto",
+                headers: { "User-Agent": UA, Referer: host + "/" } }];
+    } catch(e) {
+      console.log("[Mangoporn] Player4Me decrypt error: " + e.message);
+      return null;
+    }
   })
-  .catch(function() { return null; });
+  .catch(function(e) { console.log("[Mangoporn] Player4Me error: " + e.message); return null; });
 }
 
 // ── Host routing ──────────────────────────────────────────────────────────────
-var DOOD_HOSTS     = ["myvidplay.com","doply.net","ds2play.com","d000d.com","dood.pm","playmogo.com"];
-var FILEMOON_HOSTS = ["filemoon.to","filemoon.in","filemoon.sx","bysedikamoum.com","bysezoxexe.com","x08.ovh","javmoon.me"];
-var LULU_HOSTS     = ["lulustream.com","luluvid.com","luluvdo.com","luluvdoo.com","lulupvp.com","lulu.dlc.ovh","lulu0.ovh"];
-var PLAYER4_HOSTS  = ["player4me.online","player4me.vip","rpmplay.online"];
+var DOOD_HOSTS     = ["myvidplay.com","doply.net","ds2play.com","d000d.com","dood.pm","dooood.com","do0od.com","playmogo.com"];
+var FILEMOON_HOSTS = ["filemoon.to","filemoon.in","filemoon.sx","filemoon.nl","filemoon.art","javmoon.me","bysedikamoum.com","bysezoxexe.com","x08.ovh"];
+var LULU_HOSTS     = ["lulustream.com","luluvid.com","luluvdo.com","luluvdoo.com","lulupvp.com","lulu.dlc.ovh","lulu0.ovh","ludwigurl.com"];
+var VIDNEST_HOSTS  = ["vidnest.io","vidnest.app","vidnest.xyz","vidnest.lol","vidnest.fun"];
+var PLAYER4_HOSTS  = ["player4me.online","player4me.vip","rpmplay.online","my.player4me","vip.player4me"];
 
 function extractFromUrl(url) {
   if (DOOD_HOSTS.some(function(h){ return url.includes(h); }))     return extractDoodStream(url);
   if (FILEMOON_HOSTS.some(function(h){ return url.includes(h); })) return extractFilemoon(url);
   if (LULU_HOSTS.some(function(h){ return url.includes(h); }))     return extractLuluStream(url);
+  if (VIDNEST_HOSTS.some(function(h){ return url.includes(h); }))  return extractVidNest(url);
   if (PLAYER4_HOSTS.some(function(h){ return url.includes(h); }))  return extractPlayer4Me(url);
-  if (url.includes("vidnest.io"))                                   return extractVidNest(url);
-  return Promise.resolve(null);
+  // Unknown host: try generic extraction
+  return extractGeneric(url);
+}
+
+// Generic fallback: unpack + find any video URL
+function extractGeneric(url) {
+  var host = "";
+  try { host = new URL(url).origin; } catch(e) { return Promise.resolve(null); }
+  return fetchText(url, { Referer: BASE_URL + "/" })
+    .then(function(html) {
+      var $ = cheerio.load(html);
+      var fileUrl = findInScripts($, function(unpacked) {
+        var m = unpacked.match(/file\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/i);
+        return m ? m[1] : null;
+      });
+      if (!fileUrl) return null;
+      return [{ name: "Video", title: "Video", url: fileUrl, quality: "auto",
+                headers: { Referer: host + "/" } }];
+    })
+    .catch(function() { return null; });
 }
 
 // ── Site scraping ─────────────────────────────────────────────────────────────
-// Search: /page/1/?s=query
-// Results use toSearchingResult(): div.details a (title), div.image a (href)
 function searchSite(query) {
   return fetchText(BASE_URL + "/page/1/?s=" + encodeURIComponent(query))
     .then(function(html) {
@@ -206,7 +251,6 @@ function searchSite(query) {
     });
 }
 
-// loadLinks: div#pettabs > ul a (href)
 function getVideoLinks(pageUrl) {
   return fetchText(pageUrl, { Referer: BASE_URL + "/" })
     .then(function(html) {
@@ -232,7 +276,6 @@ function getStreams(tmdbId, mediaType, season, episode) {
     })
     .then(function(results) {
       if (!results || !results.length) return [];
-      // Try first 3 results
       var chain = Promise.resolve([]);
       results.slice(0, 3).forEach(function(result) {
         chain = chain.then(function(streams) {
