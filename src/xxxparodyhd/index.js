@@ -1,7 +1,6 @@
 import { extractStreams } from './extractor.js';
 
-// FIX: konsisten ESM export (bukan module.exports)
-export async function getStreams(tmdbId, mediaType, season, episode) {
+async function getStreams(tmdbId, mediaType, season, episode) {
     try {
         console.log(`[XXXParodyHD] Request: ${mediaType} ${tmdbId}`);
         const streams = await extractStreams(tmdbId, mediaType, season, episode);
@@ -11,3 +10,5 @@ export async function getStreams(tmdbId, mediaType, season, episode) {
         return [];
     }
 }
+
+module.exports = { getStreams };

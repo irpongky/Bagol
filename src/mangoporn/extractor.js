@@ -5,29 +5,6 @@ import cheerio from 'cheerio-without-node-native';
 
 const BASE_URL = 'https://mangoporn.net';
 
-// ─────────────────────────────────────────────────────────────────
-// BUG FIX: searchSite
-//
-// Selector lama: $(el).find('div h3') dan $(el).find('div h3 a')
-//   → terlalu generik, bisa nangkap elemen yang bukan judul/link utama
-//   → link yang didapat kadang bukan link ke halaman video
-//
-// Mangoporn article structure (berdasarkan pola umum wp-theme):
-//   <article>
-//     <div class="image">
-//       <a href="...video-page..."><img .../></a>
-//     </div>
-//     <div class="details">
-//       <a href="...video-page...">Judul Film</a>
-//     </div>
-//   </article>
-//
-// Fix:
-//   - Ambil href dari div.image > a  (lebih reliable, selalu ada)
-//   - Ambil title dari div.details a atau h2/h3 di dalam article
-//   - Fallback: coba berbagai selector umum sampai dapat keduanya
-//   - Pastikan href adalah absolute URL
-// ─────────────────────────────────────────────────────────────────
 async function searchSite(query) {
     const url = `${BASE_URL}/page/1/?s=${encodeURIComponent(query)}`;
     const html = await fetchText(url);
@@ -35,69 +12,26 @@ async function searchSite(query) {
     const results = [];
 
     $('article').each((_, el) => {
-        // Coba berbagai selector untuk title
-        const title =
-            $(el).find('div.details a').first().text().trim() ||
-            $(el).find('h2 a').first().text().trim() ||
-            $(el).find('h3 a').first().text().trim() ||
-            $(el).find('h2').first().text().trim() ||
-            $(el).find('h3').first().text().trim();
-
-        // Ambil href dari image link (paling konsisten) atau fallback ke any a[href]
-        let href =
-            $(el).find('div.image a').first().attr('href') ||
-            $(el).find('div.details a').first().attr('href') ||
-            $(el).find('a').first().attr('href');
-
-        if (!href) return;
-
-        // Pastikan absolute URL
-        if (href.startsWith('/')) href = BASE_URL + href;
-        else if (!href.startsWith('http')) href = BASE_URL + '/' + href;
-
+        const title = $(el).find('div h3').text().trim();
+        const href = $(el).find('div h3 a').attr('href');
         if (title && href && !isBlocked(title)) {
             results.push({ title, href });
         }
     });
 
-    console.log(`[Mangoporn] search "${query}" → ${results.length} results`);
     return results;
 }
 
-// ─────────────────────────────────────────────────────────────────
-// BUG FIX: getVideoLinks
-//
-// Selector lama: $('div#pettabs > ul a')
-//   → Ini sudah benar strukturnya, tapi href bisa relatif dan tidak di-fix.
-//
-// Fix:
-//   - Normalize href ke absolute URL
-//   - Deduplicate link
-// ─────────────────────────────────────────────────────────────────
 async function getVideoLinks(pageUrl) {
-    const html = await fetchText(pageUrl, {
-        headers: { Referer: BASE_URL + '/' }
-    });
+    const html = await fetchText(pageUrl);
     const $ = cheerio.load(html);
-    const seen = new Set();
     const links = [];
 
     $('div#pettabs > ul a').each((_, el) => {
-        let href = $(el).attr('href');
-        if (!href) return;
-
-        // Normalize URL
-        if (href.startsWith('//')) href = 'https:' + href;
-        else if (href.startsWith('/')) href = BASE_URL + href;
-        else if (!href.startsWith('http')) href = BASE_URL + '/' + href;
-
-        if (!seen.has(href)) {
-            seen.add(href);
-            links.push(href);
-        }
+        const href = $(el).attr('href');
+        if (href) links.push(href);
     });
 
-    console.log(`[Mangoporn] video links for ${pageUrl}: ${links.join(' | ')}`);
     return links;
 }
 
