@@ -1,6 +1,6 @@
-// PornWatch Provider for Nuvio (FIXED)
+// PornWatch Provider for Nuvio
 // Site: pornwatch.ws
-// Extractors: DoodStream, Player4Me, MixDrop, Vue, Upns, FilmCDN
+// Extractors: DoodStream, Player4Me
 
 const cheerio = require("cheerio-without-node-native");
 const CryptoJS = require("crypto-js");
@@ -46,7 +46,7 @@ function fixUrl(href, base) {
   return (base || BASE_URL) + "/" + href;
 }
 
-// ── JS Unpacker ───────────────────────────────────────────────────────────────
+// ── p,a,c,k,e,d JS Unpacker ───────────────────────────────────────────────────
 function unpackPacked(src) {
   if (src.indexOf("eval(function(p,a,c,k,e,") === -1) return src;
   try {
@@ -74,19 +74,13 @@ function findInScripts($, finderFn) {
   return result;
 }
 
-// ── TMDB (with year) ──────────────────────────────────────────────────────────
-function getTmdbInfo(tmdbId, mediaType) {
+// ── TMDB ──────────────────────────────────────────────────────────────────────
+function getTmdbTitle(tmdbId, mediaType) {
   var url = "https://api.themoviedb.org/3/" + mediaType + "/" + tmdbId
           + "?api_key=" + TMDB_API_KEY + "&language=en-US";
   return fetch(url, { headers: { "User-Agent": UA } })
     .then(function(r) { return r.ok ? r.json() : null; })
-    .then(function(d) {
-      if (!d) return null;
-      var title = d.title || d.name || null;
-      var year = d.release_date ? d.release_date.substring(0,4)
-               : d.first_air_date ? d.first_air_date.substring(0,4) : null;
-      return { title: title, year: year };
-    })
+    .then(function(d) { return d ? (d.title || d.name || null) : null; })
     .catch(function() { return null; });
 }
 
@@ -111,11 +105,13 @@ function extractDoodStream(url) {
     .catch(function(e) { console.log("[PornWatch] DoodStream error: " + e.message); return null; });
 }
 
-// ── Extractor: Player4Me (FIXED host list + ID extraction) ───────────────────
+// ── Extractor: Player4Me ──────────────────────────────────────────────────────
+// AES-CBC key="kiemtienmua911ca" iv="1234567890oiuytr"
 function extractPlayer4Me(url) {
   var urlObj = new URL(url);
   var host = urlObj.origin;
-  var id = url.split("#")[1] || url.split("/").pop().split("?")[0];
+  var id = url.indexOf("#") !== -1 ? url.split("#")[1]
+          : urlObj.pathname.replace(/\//g,"").split("?")[0];
   return fetchText(host + "/api/v1/video?id=" + id, {
     Host: urlObj.host, Accept: "*/*", Cookie: "popunderCount/=1", Referer: host + "/"
   })
@@ -143,143 +139,6 @@ function extractPlayer4Me(url) {
   .catch(function(e) { console.log("[PornWatch] Player4Me error: " + e.message); return null; });
 }
 
-// ── Extractor: MixDrop (NEW) ─────────────────────────────────────────────────
-function extractMixdrop(url) {
-  var embedUrl = url;
-  if (url.includes("/f/")) embedUrl = url.replace("/f/", "/e/");
-  var host = new URL(embedUrl).origin;
-  return fetchText(embedUrl, {
-    Referer: host + "/",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5"
-  })
-    .then(function(html) {
-      var $ = cheerio.load(html);
-      var fileUrl = findInScripts($, function(unpacked) {
-        var m = unpacked.match(/MDCore\.\w+\s*=\s*["']([^"']+)["']/);
-        if (!m) m = unpacked.match(/(?:var\s+)?\b(wurl|vurl|surl|href)\s*=\s*["']([^"']+)["']/);
-        if (!m) m = unpacked.match(/src\s*:\s*["']([^"']+\.mp4[^"']*)["']/);
-        if (!m) m = unpacked.match(/["'](https?:\/\/[^"']+\.mp4[^"']*)["']/);
-        if (!m) return null;
-        var v = m[1] || m[2];
-        if (v && v.match(/^[A-Za-z0-9+/=]{20,}$/)) {
-          try { v = atob(v); } catch(e) {}
-        }
-        if (v && v.startsWith("//")) v = "https:" + v;
-        if (v && !v.startsWith("http")) v = host + (v.startsWith("/") ? "" : "/") + v;
-        return v;
-      });
-      if (!fileUrl) return null;
-      return [{ name: "MixDrop", title: "MixDrop", url: fileUrl, quality: "auto",
-                headers: { "User-Agent": UA, Referer: host + "/" } }];
-    })
-    .catch(function(e) { console.log("[PornWatch] MixDrop error: " + e.message); return null; });
-}
-
-// ── Extractor: Vue (NEW) ─────────────────────────────────────────────────────
-function extractVue(url) {
-  var host = new URL(url).origin;
-  return fetchText(url, {
-    Referer: host + "/",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-  })
-    .then(function(html) {
-      var $ = cheerio.load(html);
-      var fileUrl = findInScripts($, function(unpacked) {
-        var m = unpacked.match(/file\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/);
-        if (!m) m = unpacked.match(/sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/);
-        if (!m) m = unpacked.match(/["'](https?:\/\/[^"']+\.(?:m3u8|mp4)[^"']*)["']/);
-        if (!m) m = unpacked.match(/src\s*=\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/);
-        return m ? m[1] : null;
-      });
-      if (!fileUrl) return null;
-      return [{ name: "Vue", title: "Vue", url: fileUrl, quality: "auto",
-                headers: { "User-Agent": UA, Referer: host + "/" } }];
-    })
-    .catch(function(e) { console.log("[PornWatch] Vue error: " + e.message); return null; });
-}
-
-// ── Extractor: Upns (NEW) ────────────────────────────────────────────────────
-function extractUpns(url) {
-  var host = new URL(url).origin;
-  return fetchText(url, {
-    Referer: host + "/",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-  })
-    .then(function(html) {
-      var $ = cheerio.load(html);
-      var fileUrl = findInScripts($, function(unpacked) {
-        var m = unpacked.match(/sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/);
-        if (!m) m = unpacked.match(/file\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/);
-        if (!m) m = unpacked.match(/["'](https?:\/\/[^"']+\.(?:m3u8|mp4)[^"']*)["']/);
-        return m ? m[1] : null;
-      });
-      if (!fileUrl) return null;
-      return [{ name: "Upns", title: "Upns", url: fileUrl, quality: "auto",
-                headers: { "User-Agent": UA, Referer: host + "/" } }];
-    })
-    .catch(function(e) { console.log("[PornWatch] Upns error: " + e.message); return null; });
-}
-
-// ── Extractor: FilmCDN (NEW - ported from Kotlin) ────────────────────────────
-function extractFilmcdn(url, referer) {
-  var host = "";
-  try { host = new URL(url).origin; } catch(e) { return Promise.resolve(null); }
-  var embedUrl = url;
-  if (url.includes("/d/")) embedUrl = url.replace("/d/", "/v/");
-  else if (url.includes("/download/")) embedUrl = url.replace("/download/", "/v/");
-  else if (url.includes("/file/")) embedUrl = url.replace("/file/", "/v/");
-  else if (url.includes("/f/")) embedUrl = url.replace("/f/", "/v/");
-
-  return fetchText(embedUrl, {
-    Referer: referer || host + "/",
-    Origin: host,
-    "Sec-Fetch-Dest": "empty",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Site": "cross-site"
-  })
-    .then(function(html) {
-      var script = html;
-      var packedMatch = html.match(/eval\(function\(p,a,c,k,e,d\)[\s\S]*?<\/script>/);
-      if (packedMatch) {
-        var unpacked = unpackPacked(packedMatch[0]);
-        if (unpacked.indexOf("var links") !== -1) {
-          unpacked = unpacked.substring(unpacked.indexOf("var links"));
-        }
-        script = unpacked;
-      } else {
-        var sm = html.match(/<script[^>]*>([\s\S]*?sources:[\s\S]*?)<\/script>/);
-        if (sm) script = sm[1];
-      }
-      if (!script) return null;
-
-      var streams = [];
-      var regex = /:\s*"(.*?m3u8.*?)"/g;
-      var match;
-      while ((match = regex.exec(script)) !== null) {
-        var m3u8Url = match[1];
-        if (m3u8Url.startsWith("http")) {
-          streams.push({
-            name: "FilmCDN",
-            title: "FilmCDN",
-            url: m3u8Url,
-            quality: "auto",
-            headers: {
-              "User-Agent": UA,
-              Referer: referer || host + "/",
-              Origin: host,
-              "Sec-Fetch-Dest": "empty",
-              "Sec-Fetch-Mode": "cors",
-              "Sec-Fetch-Site": "cross-site"
-            }
-          });
-        }
-      }
-      return streams.length ? streams : null;
-    })
-    .catch(function(e) { console.log("[PornWatch] FilmCDN error: " + e.message); return null; });
-}
-
 // ── Generic fallback ──────────────────────────────────────────────────────────
 function extractGeneric(url) {
   var host = "";
@@ -299,25 +158,19 @@ function extractGeneric(url) {
 }
 
 // ── Host routing ──────────────────────────────────────────────────────────────
-var DOOD_HOSTS    = ["myvidplay.com","doply.net","ds2play.com","d000d.com","dood.pm","dooood.com","do0od.com","playmogo.com"];
-var PLAYER4_HOSTS = ["player4me.online","player4me.vip","rpmplay.online","player4me.xyz","player4me.cc","play4me.online","play4me.vip","p4me.xyz","p4mplay.xyz"];
-var MIXDROP_HOSTS = ["mixdrop.ag","mixdrop.my","mixdrop.is","mixdrop.co","mixdrop.ch","mixdrop.to","mixdrop.club","mixdrop.sx"];
-var VUE_HOSTS     = ["vue.to","vue.tv","vueplayer.xyz","vueplay.xyz","vue.watch"];
-var UPNS_HOSTS    = ["upns.xyz","upns.live","upns.cc","upns.to","upns.click"];
-var FILMCDN_HOSTS = ["filmcdm.top","filmcdn.xyz","filmcdn.top"];
+var DOOD_HOSTS    = ["myvidplay.com","doply.net","ds2play.com","d000d.com","dood.pm","dooood.com","do0od.com","playmogo.com","easyvidplayer.com"];
+var PLAYER4_HOSTS = ["player4me.online","player4me.vip","rpmplay.online","my.player4me","vip.player4me"];
+var UPNS_HOSTS    = ["upns.online","my.upns.online","seekplayer.vip","embedseek.online"];
 
-function extractFromUrl(url, referer) {
+function extractFromUrl(url) {
   if (DOOD_HOSTS.some(function(h){ return url.includes(h); }))    return extractDoodStream(url);
+  if (UPNS_HOSTS.some(function(h){ return url.includes(h); }))    return extractPlayer4Me(url); // UPNS = same API
   if (PLAYER4_HOSTS.some(function(h){ return url.includes(h); })) return extractPlayer4Me(url);
-  if (MIXDROP_HOSTS.some(function(h){ return url.includes(h); })) return extractMixdrop(url);
-  if (VUE_HOSTS.some(function(h){ return url.includes(h); }))     return extractVue(url);
-  if (UPNS_HOSTS.some(function(h){ return url.includes(h); }))    return extractUpns(url);
-  if (FILMCDN_HOSTS.some(function(h){ return url.includes(h); })) return extractFilmcdn(url, referer);
   return extractGeneric(url);
 }
 
 // ── Site scraping ─────────────────────────────────────────────────────────────
-function searchSite(query, year) {
+function searchSite(query) {
   return fetchText(BASE_URL + "/?s=" + encodeURIComponent(query))
     .then(function(html) {
       var $ = cheerio.load(html);
@@ -325,19 +178,7 @@ function searchSite(query, year) {
       $("div.ml-item").each(function(_, el) {
         var title = $(el).find("h2").first().text().trim();
         var href  = fixUrl($(el).find("a").first().attr("href"));
-        if (title && href && !isBlocked(title)) {
-          var lowerTitle = title.toLowerCase();
-          var lowerQuery = query.toLowerCase();
-          var queryWords = lowerQuery.split(/\s+/).filter(function(w){ return w.length > 2; });
-          var matchCount = 0;
-          queryWords.forEach(function(w){ if (lowerTitle.indexOf(w) !== -1) matchCount++; });
-          var matchRatio = queryWords.length > 0 ? matchCount / queryWords.length : 0;
-          var titleYear = title.match(/\b(19\d{2}|20\d{2})\b/);
-          var yearMatch = !year || !titleYear || titleYear[1] === String(year);
-          if (matchRatio >= 0.5 && yearMatch) {
-            results.push({ title: title, href: href });
-          }
-        }
+        if (title && href && !isBlocked(title)) results.push({ title: title, href: href });
       });
       console.log("[PornWatch] search '" + query + "' -> " + results.length + " results");
       return results;
@@ -361,11 +202,11 @@ function getVideoLinks(pageUrl) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 function getStreams(tmdbId, mediaType, season, episode) {
   console.log("[PornWatch] tmdbId=" + tmdbId + " type=" + mediaType);
-  return getTmdbInfo(tmdbId, mediaType)
-    .then(function(info) {
-      if (!info || !info.title) { console.log("[PornWatch] no TMDB title"); return []; }
-      console.log("[PornWatch] title=" + info.title + " year=" + info.year);
-      return searchSite(info.title, info.year);
+  return getTmdbTitle(tmdbId, mediaType)
+    .then(function(title) {
+      if (!title) { console.log("[PornWatch] no TMDB title"); return []; }
+      console.log("[PornWatch] title=" + title);
+      return searchSite(title);
     })
     .then(function(results) {
       if (!results || !results.length) return [];
@@ -375,7 +216,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
           if (streams.length) return streams;
           return getVideoLinks(result.href)
             .then(function(links) {
-              return Promise.all(links.map(function(link) { return extractFromUrl(link, result.href); }));
+              return Promise.all(links.map(function(link) { return extractFromUrl(link); }));
             })
             .then(function(extracted) {
               var found = [];
