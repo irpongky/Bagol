@@ -33,12 +33,15 @@ async function aesCbcDecrypt(cipherB64, keyStr, ivStr) {
 }
 
 // ─────────────────────────────────────────────
-// DoodStream  (myvidplay.com / doply.net / playmogo.com)
+// DoodStream  (myvidplay.com / doply.net / playmogo.com / dood.*)
 // ─────────────────────────────────────────────
 
 const DOOD_HOSTS = [
     'myvidplay.com', 'doply.net', 'playmogo.com', 'dood.pm',
-    'ds2play.com', 'd000d.com',
+    'ds2play.com', 'd000d.com', 'doodstream.com', 'dood.to',
+    'dood.watch', 'dooood.com', 'doodad.pro', 'dood.wf',
+    'dood.cx', 'dood.la', 'dood.sh', 'dood.re', 'dood.so',
+    'dood.yt', 'dood.stream', 'doodcdn.com', 'doods.pro',
 ];
 
 export function isDoodStream(url) {
@@ -47,17 +50,23 @@ export function isDoodStream(url) {
 
 export async function extractDoodStream(url) {
     try {
-        const embedUrl = url.replace('doply.net', 'myvidplay.com');
-        const refHost = 'https://myvidplay.com';
+        // Normalize known aliases to their canonical host
+        const embedUrl = url
+            .replace('doply.net', 'myvidplay.com')
+            .replace('d000d.com', 'myvidplay.com');
+        const embedOrigin = new URL(embedUrl).origin;
+
         const html = await fetchText(embedUrl, {
-            headers: { 'User-Agent': UA, 'Referer': refHost }
+            headers: { 'User-Agent': UA, 'Referer': embedOrigin + '/' }
         });
 
         const md5Match = html.match(/\/pass_md5\/([^/]*)\/([^/']*)/);
         if (!md5Match) return null;
 
+        // md5Match[0] = full path, [1] = id/expiry segment, [2] = token
         const [fullPath, expiry, token] = md5Match;
-        const md5Url = refHost + fullPath;
+        // IMPORTANT: use same origin as embed, not hardcoded myvidplay.com
+        const md5Url = embedOrigin + fullPath;
 
         const baseLink = (await fetchText(md5Url, {
             headers: { 'User-Agent': UA, 'Referer': embedUrl }
@@ -72,7 +81,7 @@ export async function extractDoodStream(url) {
             title: 'DoodStream',
             url: directUrl,
             quality: 'auto',
-            headers: { 'User-Agent': UA, 'Referer': refHost }
+            headers: { 'User-Agent': UA, 'Referer': embedOrigin + '/' }
         }];
     } catch {
         return null;
@@ -809,6 +818,33 @@ export async function extractMixDrop(url) {
         return null;
     } catch {
         return null;
+    }
+}
+
+// ─────────────────────────────────────────────
+// Known embed host checker (used by scrapers as fallback)
+// ─────────────────────────────────────────────
+
+const ALL_KNOWN_HOSTS = [
+    ...DOOD_HOSTS,
+    ...FILEMOON_HOSTS,
+    ...LULU_HOSTS,
+    ...PLAYER4ME_HOSTS,
+    'vidguard.to', 'listeamed.net', 'bembed.net',
+    'vidnest.io', 'vidnest.net',
+    ...STREAMWISH_HOSTS,
+    ...VIDHIDE_HOSTS,
+    'maxstream.org', 'maxstream.video',
+    'javclan.com',
+    'javggvideo.xyz', 'javgg.net',
+    'mixdrop.', 'mixdrp.',
+];
+
+export function isKnownEmbedHost(url) {
+    try {
+        return ALL_KNOWN_HOSTS.some(h => url.includes(h));
+    } catch {
+        return false;
     }
 }
 

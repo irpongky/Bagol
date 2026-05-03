@@ -85,23 +85,38 @@ var DOOD_HOSTS = [
   "playmogo.com",
   "dood.pm",
   "ds2play.com",
-  "d000d.com"
+  "d000d.com",
+  "doodstream.com",
+  "dood.to",
+  "dood.watch",
+  "dooood.com",
+  "doodad.pro",
+  "dood.wf",
+  "dood.cx",
+  "dood.la",
+  "dood.sh",
+  "dood.re",
+  "dood.so",
+  "dood.yt",
+  "dood.stream",
+  "doodcdn.com",
+  "doods.pro"
 ];
 function isDoodStream(url) {
   return DOOD_HOSTS.some((h) => url.includes(h));
 }
 async function extractDoodStream(url) {
   try {
-    const embedUrl = url.replace("doply.net", "myvidplay.com");
-    const refHost = "https://myvidplay.com";
+    const embedUrl = url.replace("doply.net", "myvidplay.com").replace("d000d.com", "myvidplay.com");
+    const embedOrigin = new URL(embedUrl).origin;
     const html = await fetchText(embedUrl, {
-      headers: { "User-Agent": UA, "Referer": refHost }
+      headers: { "User-Agent": UA, "Referer": embedOrigin + "/" }
     });
     const md5Match = html.match(/\/pass_md5\/([^/]*)\/([^/']*)/);
     if (!md5Match)
       return null;
     const [fullPath, expiry, token] = md5Match;
-    const md5Url = refHost + fullPath;
+    const md5Url = embedOrigin + fullPath;
     const baseLink = (await fetchText(md5Url, {
       headers: { "User-Agent": UA, "Referer": embedUrl }
     })).trim();
@@ -111,7 +126,7 @@ async function extractDoodStream(url) {
       title: "DoodStream",
       url: directUrl,
       quality: "auto",
-      headers: { "User-Agent": UA, "Referer": refHost }
+      headers: { "User-Agent": UA, "Referer": embedOrigin + "/" }
     }];
   } catch {
     return null;
@@ -713,6 +728,33 @@ async function extractMixDrop(url) {
     return null;
   }
 }
+var ALL_KNOWN_HOSTS = [
+  ...DOOD_HOSTS,
+  ...FILEMOON_HOSTS,
+  ...LULU_HOSTS,
+  ...PLAYER4ME_HOSTS,
+  "vidguard.to",
+  "listeamed.net",
+  "bembed.net",
+  "vidnest.io",
+  "vidnest.net",
+  ...STREAMWISH_HOSTS,
+  ...VIDHIDE_HOSTS,
+  "maxstream.org",
+  "maxstream.video",
+  "javclan.com",
+  "javggvideo.xyz",
+  "javgg.net",
+  "mixdrop.",
+  "mixdrp."
+];
+function isKnownEmbedHost(url) {
+  try {
+    return ALL_KNOWN_HOSTS.some((h) => url.includes(h));
+  } catch {
+    return false;
+  }
+}
 async function extractFromUrl(url, referer) {
   if (isDoodStream(url))
     return extractDoodStream(url);
@@ -815,24 +857,64 @@ async function searchSite(query) {
   const $ = import_cheerio_without_node_native.default.load(html);
   const results = [];
   $("div.movies-list div.ml-item").each((_, el) => {
-    const title = $(el).find("h2").text().trim();
-    const href = $(el).find("a").attr("href");
+    const title = $(el).find("h2").text().trim() || $(el).find("h3").text().trim();
+    const href = $(el).find("a").first().attr("href");
     if (title && href && !isBlocked(title)) {
       results.push({ title, href });
     }
   });
+  if (!results.length) {
+    $("div.ml-item, article, div.item, div.post").each((_, el) => {
+      const title = $(el).find("h2, h3, .title").first().text().trim();
+      const href = $(el).find("a").first().attr("href");
+      if (title && href && href.startsWith("http") && !isBlocked(title)) {
+        results.push({ title, href });
+      }
+    });
+  }
   return results;
 }
 async function getVideoLinks(pageUrl) {
   const html = await fetchText(pageUrl);
   const $ = import_cheerio_without_node_native.default.load(html);
-  const links = [];
+  const links = /* @__PURE__ */ new Set();
   $('div.Rtable1 a[id="#iframe"]').each((_, el) => {
     const href = $(el).attr("href");
-    if (href)
-      links.push(href);
+    if (href && href.startsWith("http"))
+      links.add(href);
   });
-  return links;
+  if (!links.size) {
+    const selectors = [
+      "div.Rtable1 a",
+      "div.Rtable1-cell a",
+      "div.servers a",
+      "div.embed-links a",
+      "div#pettabs a",
+      "#pettabs a",
+      "div.tabs a",
+      "div.player-links a",
+      "ul.servers-list a",
+      'table a[href*="http"]'
+    ];
+    for (const sel of selectors) {
+      $(sel).each((_, el) => {
+        const href = $(el).attr("href");
+        if (href && href.startsWith("http"))
+          links.add(href);
+      });
+      if (links.size)
+        break;
+    }
+  }
+  if (!links.size) {
+    $("a[href]").each((_, el) => {
+      const href = $(el).attr("href") || "";
+      if (href.startsWith("http") && isKnownEmbedHost(href)) {
+        links.add(href);
+      }
+    });
+  }
+  return [...links];
 }
 async function extractStreams(tmdbId, mediaType, season, episode) {
   const title = await getTitleFromTmdb(tmdbId, mediaType);

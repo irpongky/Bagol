@@ -1,5 +1,5 @@
 import { fetchText, getTitleFromTmdb } from '../shared/http.js';
-import { extractFromUrl } from '../shared/extractors.js';
+import { extractFromUrl, isKnownEmbedHost } from '../shared/extractors.js';
 import { isBlocked } from '../shared/filters.js';
 import cheerio from 'cheerio-without-node-native';
 
@@ -12,12 +12,27 @@ async function searchSite(query) {
     const results = [];
 
     $('article').each((_, el) => {
-        const title = $(el).find('div h3').text().trim();
-        const href = $(el).find('div h3 a').attr('href');
+        const title = $(el).find('div h3').text().trim()
+            || $(el).find('h2').text().trim()
+            || $(el).find('h1').text().trim();
+        const href = $(el).find('h3 a').attr('href')
+            || $(el).find('h2 a').attr('href')
+            || $(el).find('a').first().attr('href');
         if (title && href && !isBlocked(title)) {
             results.push({ title, href });
         }
     });
+
+    // Fallback: generic post/item selectors
+    if (!results.length) {
+        $('div.post, div.item, div.video-item, div.ml-item').each((_, el) => {
+            const title = $(el).find('h2, h3, .title').first().text().trim();
+            const href = $(el).find('a').first().attr('href');
+            if (title && href && href.startsWith('http') && !isBlocked(title)) {
+                results.push({ title, href });
+            }
+        });
+    }
 
     return results;
 }
@@ -25,14 +40,47 @@ async function searchSite(query) {
 async function getVideoLinks(pageUrl) {
     const html = await fetchText(pageUrl);
     const $ = cheerio.load(html);
-    const links = [];
+    const links = new Set();
 
+    // Primary selectors (original)
     $('div#pettabs > ul a').each((_, el) => {
         const href = $(el).attr('href');
-        if (href) links.push(href);
+        if (href && href.startsWith('http')) links.add(href);
     });
 
-    return links;
+    // Fallback selectors
+    if (!links.size) {
+        const selectors = [
+            'div#pettabs a',
+            '#pettabs a',
+            'div.pettabs a',
+            'div.tabs a',
+            'div.servers a',
+            'div.links a',
+            'div.video-links a',
+            'div.Rtable1 a',
+            'div.Rtable1-cell a',
+        ];
+        for (const sel of selectors) {
+            $(sel).each((_, el) => {
+                const href = $(el).attr('href');
+                if (href && href.startsWith('http')) links.add(href);
+            });
+            if (links.size) break;
+        }
+    }
+
+    // Last resort: scan ALL links for known streaming hosts
+    if (!links.size) {
+        $('a[href]').each((_, el) => {
+            const href = $(el).attr('href') || '';
+            if (href.startsWith('http') && isKnownEmbedHost(href)) {
+                links.add(href);
+            }
+        });
+    }
+
+    return [...links];
 }
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {
