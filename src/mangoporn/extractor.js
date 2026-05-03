@@ -12,11 +12,13 @@ async function searchSite(query) {
     const results = [];
 
     $('article').each((_, el) => {
-        const title = $(el).find('div h3').text().trim()
-            || $(el).find('h2').text().trim()
-            || $(el).find('h1').text().trim();
-        const href = $(el).find('h3 a').attr('href')
-            || $(el).find('h2 a').attr('href')
+        // Search results use div.details a for title and div.image a for href (Kraptor ref)
+        const title = $(el).find('div.details a').first().text().trim()
+            || $(el).find('div h3').text().trim()
+            || $(el).find('h2').text().trim();
+        const href = $(el).find('div.image a').attr('href')
+            || $(el).find('div.details a').attr('href')
+            || $(el).find('h3 a').attr('href')
             || $(el).find('a').first().attr('href');
         if (title && href && !isBlocked(title)) {
             results.push({ title, href });

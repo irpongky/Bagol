@@ -812,6 +812,70 @@ export async function extractMixDrop(url) {
 }
 
 // ─────────────────────────────────────────────
+// StreamTape  (streamtape.com / streamtape.to / streamtape.net / etc.)
+// ─────────────────────────────────────────────
+
+const STREAMTAPE_HOSTS = [
+    'streamtape.com', 'streamtape.to', 'streamtape.net', 'streamtape.xyz',
+    'streamtape.site', 'shavetape.cash', 'tapecontent.net',
+];
+
+export function isStreamtape(url) {
+    return STREAMTAPE_HOSTS.some(h => url.includes(h));
+}
+
+export async function extractStreamtape(url) {
+    try {
+        const html = await fetchText(url, { headers: { 'User-Agent': UA, 'Referer': url } });
+
+        // StreamTape obfuscates the link across two parts in the HTML
+        // Pattern: document.getElementById('...').innerHTML = "..."; + another partial string
+        const tokenMatch = html.match(/document\.getElementById\('[^']+'\)\.innerHTML\s*=\s*["']([^"']+)["']/);
+        const token2Match = html.match(/\+\s*["']([^"']+)["']\s*;/);
+        if (tokenMatch && token2Match) {
+            const raw = (tokenMatch[1] + token2Match[1]).replace(/\s/g, '');
+            const videoUrl = raw.startsWith('//') ? 'https:' + raw : (raw.startsWith('http') ? raw : 'https://' + raw);
+            return [{
+                name: 'StreamTape',
+                title: 'StreamTape',
+                url: videoUrl,
+                quality: 'auto',
+                headers: { 'User-Agent': UA, 'Referer': url }
+            }];
+        }
+
+        // Alternative: robotlink / idelink pattern
+        const robotMatch = html.match(/id=["']robotlink["'][^>]*>([^<]+)<\/[^>]+>\s*<[^>]+>([^<]+)</);
+        if (robotMatch) {
+            const videoUrl = 'https:' + robotMatch[1] + robotMatch[2].trim();
+            return [{
+                name: 'StreamTape',
+                title: 'StreamTape',
+                url: videoUrl,
+                quality: 'auto',
+                headers: { 'User-Agent': UA, 'Referer': url }
+            }];
+        }
+
+        // bare mp4
+        const mp4Match = html.match(/["'](https?:\/\/[^"']+\.mp4[^"']*)["']/);
+        if (mp4Match) {
+            return [{
+                name: 'StreamTape',
+                title: 'StreamTape',
+                url: mp4Match[1],
+                quality: 'auto',
+                headers: { 'User-Agent': UA, 'Referer': url }
+            }];
+        }
+
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+// ─────────────────────────────────────────────
 // Known embed host checker (used by scrapers as fallback)
 // ─────────────────────────────────────────────
 
@@ -828,6 +892,7 @@ const ALL_KNOWN_HOSTS = [
     'javclan.com',
     'javggvideo.xyz', 'javgg.net',
     'mixdrop.', 'mixdrp.',
+    ...STREAMTAPE_HOSTS,
 ];
 
 export function isKnownEmbedHost(url) {
@@ -855,5 +920,6 @@ export async function extractFromUrl(url, referer) {
     if (isJavclan(url))        return extractJavclan(url, referer);
     if (isJavggvideo(url))     return extractJavggvideo(url);
     if (isMixDrop(url))        return extractMixDrop(url);
+    if (isStreamtape(url))     return extractStreamtape(url);
     return null;
 }

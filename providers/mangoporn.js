@@ -777,6 +777,62 @@ function extractMixDrop(url) {
     }
   });
 }
+var STREAMTAPE_HOSTS = [
+  "streamtape.com",
+  "streamtape.to",
+  "streamtape.net",
+  "streamtape.xyz",
+  "streamtape.site",
+  "shavetape.cash",
+  "tapecontent.net"
+];
+function isStreamtape(url) {
+  return STREAMTAPE_HOSTS.some((h) => url.includes(h));
+}
+function extractStreamtape(url) {
+  return __async(this, null, function* () {
+    try {
+      const html = yield fetchText(url, { headers: { "User-Agent": UA, "Referer": url } });
+      const tokenMatch = html.match(/document\.getElementById\('[^']+'\)\.innerHTML\s*=\s*["']([^"']+)["']/);
+      const token2Match = html.match(/\+\s*["']([^"']+)["']\s*;/);
+      if (tokenMatch && token2Match) {
+        const raw = (tokenMatch[1] + token2Match[1]).replace(/\s/g, "");
+        const videoUrl = raw.startsWith("//") ? "https:" + raw : raw.startsWith("http") ? raw : "https://" + raw;
+        return [{
+          name: "StreamTape",
+          title: "StreamTape",
+          url: videoUrl,
+          quality: "auto",
+          headers: { "User-Agent": UA, "Referer": url }
+        }];
+      }
+      const robotMatch = html.match(/id=["']robotlink["'][^>]*>([^<]+)<\/[^>]+>\s*<[^>]+>([^<]+)</);
+      if (robotMatch) {
+        const videoUrl = "https:" + robotMatch[1] + robotMatch[2].trim();
+        return [{
+          name: "StreamTape",
+          title: "StreamTape",
+          url: videoUrl,
+          quality: "auto",
+          headers: { "User-Agent": UA, "Referer": url }
+        }];
+      }
+      const mp4Match = html.match(/["'](https?:\/\/[^"']+\.mp4[^"']*)["']/);
+      if (mp4Match) {
+        return [{
+          name: "StreamTape",
+          title: "StreamTape",
+          url: mp4Match[1],
+          quality: "auto",
+          headers: { "User-Agent": UA, "Referer": url }
+        }];
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  });
+}
 var ALL_KNOWN_HOSTS = [
   ...DOOD_HOSTS,
   ...FILEMOON_HOSTS,
@@ -795,7 +851,8 @@ var ALL_KNOWN_HOSTS = [
   "javggvideo.xyz",
   "javgg.net",
   "mixdrop.",
-  "mixdrp."
+  "mixdrp.",
+  ...STREAMTAPE_HOSTS
 ];
 function isKnownEmbedHost(url) {
   try {
@@ -830,6 +887,8 @@ function extractFromUrl(url, referer) {
       return extractJavggvideo(url);
     if (isMixDrop(url))
       return extractMixDrop(url);
+    if (isStreamtape(url))
+      return extractStreamtape(url);
     return null;
   });
 }
@@ -909,8 +968,8 @@ function searchSite(query) {
     const $ = import_cheerio_without_node_native.default.load(html);
     const results = [];
     $("article").each((_, el) => {
-      const title = $(el).find("div h3").text().trim() || $(el).find("h2").text().trim() || $(el).find("h1").text().trim();
-      const href = $(el).find("h3 a").attr("href") || $(el).find("h2 a").attr("href") || $(el).find("a").first().attr("href");
+      const title = $(el).find("div.details a").first().text().trim() || $(el).find("div h3").text().trim() || $(el).find("h2").text().trim();
+      const href = $(el).find("div.image a").attr("href") || $(el).find("div.details a").attr("href") || $(el).find("h3 a").attr("href") || $(el).find("a").first().attr("href");
       if (title && href && !isBlocked(title)) {
         results.push({ title, href });
       }
