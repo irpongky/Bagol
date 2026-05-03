@@ -1,258 +1,586 @@
-// PornWatch Provider for Nuvio
-// Site: pornwatch.ws
-
-const cheerio = require("cheerio-without-node-native");
-
-const TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
-const BASE_URL = "https://pornwatch.ws";
-const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-
-// ── Pure JS AES-128-CBC (no external deps) ────────────────────────────────────
-var _S=[99,124,119,123,242,107,111,197,48,1,103,43,254,215,171,118,202,130,201,125,250,89,71,240,173,212,162,175,156,164,114,192,183,253,147,38,54,63,247,204,52,165,229,241,113,216,49,21,4,199,35,195,24,150,5,154,7,18,128,226,235,39,178,117,9,131,44,26,27,110,90,160,82,59,214,179,41,227,47,132,83,209,0,237,32,252,177,91,106,203,190,57,74,76,88,207,208,239,170,251,67,77,51,133,69,249,2,127,80,60,159,168,81,163,64,143,146,157,56,245,188,182,218,33,16,255,243,210,205,12,19,236,95,151,68,23,196,167,126,61,100,93,25,115,96,129,79,220,34,42,144,136,70,238,184,20,222,94,11,219,224,50,58,10,73,6,36,92,194,211,172,98,145,149,228,121,231,200,55,109,141,213,78,169,108,86,244,234,101,122,174,8,186,120,37,46,28,166,180,198,232,221,116,31,75,189,139,138,112,62,181,102,72,3,246,14,97,53,87,185,134,193,29,158,225,248,152,17,105,217,142,148,155,30,135,233,206,85,40,223,140,161,137,13,191,230,66,104,65,153,45,15,176,84,187,22];
-var _IS=new Array(256); _S.forEach(function(v,i){_IS[v]=i;});
-function _gm(a,b){var r=0;while(b){if(b&1)r^=a;a=((a<<1)^(a&128?27:0))&255;b>>=1;}return r;}
-function _aesKeyEx(key){
-  var w=[],rc=[1,2,4,8,16,32,64,128,27,54],i;
-  for(i=0;i<4;i++) w[i]=[key[i*4],key[i*4+1],key[i*4+2],key[i*4+3]];
-  for(i=4;i<44;i++){
-    var t=w[i-1].slice();
-    if(i%4===0){t=[_S[t[1]],_S[t[2]],_S[t[3]],_S[t[0]]];t[0]^=rc[i/4-1];}
-    w[i]=w[i-4].map(function(b,j){return b^t[j];});
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
   }
-  var rks=[];for(i=0;i<11;i++){var rk=[];for(var j=0;j<4;j++)rk=rk.concat(w[i*4+j]);rks.push(rk);}return rks;
-}
-function _aesDecBlk(ct,rks){
-  var s=ct.map(function(b,i){return b^rks[10][i];});
-  for(var r=9;r>=1;r--){
-    var t=s.slice();
-    t[1]=s[13];t[5]=s[1];t[9]=s[5];t[13]=s[9];
-    t[2]=s[10];t[6]=s[14];t[10]=s[2];t[14]=s[6];
-    t[3]=s[7];t[7]=s[11];t[11]=s[15];t[15]=s[3];
-    s=t.map(function(b,i){return _IS[b]^rks[r][i];});
-    for(var c=0;c<4;c++){
-      var a=s[c*4],b=s[c*4+1],cc=s[c*4+2],d=s[c*4+3];
-      s[c*4]=_gm(a,14)^_gm(b,11)^_gm(cc,13)^_gm(d,9);
-      s[c*4+1]=_gm(a,9)^_gm(b,14)^_gm(cc,11)^_gm(d,13);
-      s[c*4+2]=_gm(a,13)^_gm(b,9)^_gm(cc,14)^_gm(d,11);
-      s[c*4+3]=_gm(a,11)^_gm(b,13)^_gm(cc,9)^_gm(d,14);
-    }
-  }
-  var t=s.slice();
-  t[1]=s[13];t[5]=s[1];t[9]=s[5];t[13]=s[9];
-  t[2]=s[10];t[6]=s[14];t[10]=s[2];t[14]=s[6];
-  t[3]=s[7];t[7]=s[11];t[11]=s[15];t[15]=s[3];
-  return t.map(function(b,i){return _IS[b]^rks[0][i];});
-}
-function _b64ToBytes(b64){
-  b64=b64.replace(/-/g,'+').replace(/_/g,'/');
-  while(b64.length%4)b64+='=';
-  var bin=atob(b64),out=[];
-  for(var i=0;i<bin.length;i++)out.push(bin.charCodeAt(i));
-  return out;
-}
-function aes128cbcDecrypt(b64ct,keyStr,ivStr){
-  try{
-    var key=[],iv=[];
-    for(var i=0;i<16;i++){key.push(keyStr.charCodeAt(i)&255);iv.push(ivStr.charCodeAt(i)&255);}
-    var ct=_b64ToBytes(b64ct),rks=_aesKeyEx(key),result=[],prev=iv;
-    for(var i=0;i<ct.length;i+=16){
-      var blk=ct.slice(i,i+16),dec=_aesDecBlk(blk,rks);
-      result=result.concat(dec.map(function(b,j){return b^prev[j];}));prev=blk;
-    }
-    var pad=result[result.length-1];
-    return result.slice(0,result.length-pad).map(function(c){return String.fromCharCode(c);}).join('');
-  }catch(e){return null;}
-}
-
-// ── Blocked keywords ──────────────────────────────────────────────────────────
-var BLOCKED_RE=/\b(?:gay|homosexual|queer|homo|androphile|femboy|effeminate|trap|trans|Trade|Vers|Twink|Otter|Bear|Femme|Masc|Pegging|Anal Gape|Femdom|futa|strap-on|strapon|tranny|tribute|crossdress|tgirl|t-girl|Bisexual|Intersex|LGBTQ|Trans|TS|TGirl|T-Boy|Transsexual)\b/i;
-function isBlocked(t){return BLOCKED_RE.test(t);}
-
-// ── HTTP ──────────────────────────────────────────────────────────────────────
-function fetchText(url, extra) {
-  return fetch(url,{headers:Object.assign({"User-Agent":UA,"Accept":"text/html,*/*","Accept-Language":"en-US,en;q=0.9"},extra||{})})
-    .then(function(r){if(!r.ok) throw new Error("HTTP "+r.status); return r.text();});
-}
-function fixUrl(href, base) {
-  if(!href) return null; href=href.trim();
-  if(href.startsWith("http")) return href;
-  if(href.startsWith("//")) return "https:"+href;
-  return (base||BASE_URL)+(href.startsWith("/")?href:"/"+href);
-}
-
-// ── p,a,c,k,e,d unpacker ─────────────────────────────────────────────────────
-function unpack(src) {
-  if(src.indexOf("eval(function(p,a,c,k,e,")===-1) return src;
-  try{
-    var m=src.match(/\('([\s\S]*?)',\s*(\d+),\s*(\d+),\s*'([\s\S]*?)'\.split\('([|]?)'\)/);
-    if(!m) return src;
-    var p=m[1],base=parseInt(m[2]),keys=m[4].split(m[5]||"|");
-    return p.replace(/\b\w+\b/g,function(w){var n=parseInt(w,base);return(n>=0&&n<keys.length&&keys[n]!="")?keys[n]:w;});
-  }catch(e){return src;}
-}
-function findInScripts($, fn) {
-  var r=null;
-  $("script").each(function(_,el){if(r) return false; var raw=$(el).html()||""; var found=fn(unpack(raw),raw); if(found){r=found;return false;}});
-  return r;
-}
-
-// ── TMDB ──────────────────────────────────────────────────────────────────────
-function getTmdbTitle(id, type) {
-  return fetch("https://api.themoviedb.org/3/"+type+"/"+id+"?api_key="+TMDB_API_KEY,{headers:{"User-Agent":UA}})
-    .then(function(r){return r.ok?r.json():null;})
-    .then(function(d){return d?(d.title||d.name||null):null;})
-    .catch(function(){return null;});
-}
-
-// ── DoodStream / PlayMogo ─────────────────────────────────────────────────────
-function extractDood(url) {
-  var host=url.includes("myvidplay.com")?"https://myvidplay.com":url.includes("playmogo.com")?"https://playmogo.com":"https://dood.pm";
-  return fetchText(url,{Referer:host}).then(function(html){
-    var m=html.match(/\/pass_md5\/([^/]+)\/([^'"\s]+)/);
-    if(!m) return null;
-    return fetchText(host+m[0],{Referer:url}).then(function(base){
-      base=base.trim();
-      return [{name:"DoodStream",title:"DoodStream",url:base+"?token="+m[2]+"&expiry="+m[1]+"000",quality:"auto",headers:{"User-Agent":UA,Referer:host}}];
-    });
-  }).catch(function(e){console.log("[PornWatch] Dood: "+e.message);return null;});
-}
-
-// ── Hash-player ───────────────────────────────────────────────────────────────
-var HASHPLAYER_KEY="kiemtienmua911ca", HASHPLAYER_IV="1234567890oiuytr";
-function extractHashPlayer(url, label) {
-  try{
-    var urlObj=new URL(url), host=urlObj.origin;
-    var id=url.includes("#")?url.split("#")[1]:urlObj.pathname.replace(/\//g,"").split("?")[0];
-    if(!id) return Promise.resolve(null);
-    return fetchText(host+"/api/v1/video?id="+id,{"Host":urlObj.host,"Accept":"*/*","Cookie":"popunderCount/=1","Referer":host+"/"})
-      .then(function(raw){
-        raw=raw.trim(); if(!raw||raw.charAt(0)==="<") return null;
-        var dec=aes128cbcDecrypt(raw,HASHPLAYER_KEY,HASHPLAYER_IV); if(!dec) return null;
-        var data=JSON.parse(dec);
-        var videoUrl=data.source||data.hls||data.cf||(data.sources&&data.sources[0]&&(data.sources[0].file||data.sources[0].src));
-        if(!videoUrl) return null;
-        if(videoUrl.endsWith(".txt")||videoUrl.includes("cf-master")){
-          return fetchText(videoUrl,{Referer:host+"/"}).then(function(m3u8){
-            m3u8=m3u8.trim(); if(!m3u8) return null;
-            return [{name:label,title:label,url:m3u8,quality:"auto",headers:{Referer:host+"/","User-Agent":UA}}];
-          });
-        }
-        return [{name:label,title:label,url:videoUrl,quality:"auto",headers:{Referer:host+"/","User-Agent":UA}}];
-      })
-      .catch(function(e){console.log("[PornWatch] "+label+": "+e.message);return null;});
-  }catch(e){return Promise.resolve(null);}
-}
-
-// ── StreamTape ────────────────────────────────────────────────────────────────
-function extractStreamTape(url) {
-  return fetchText(url,{Referer:"https://streamtape.com/"}).then(function(html){
-    var m=html.match(/innerHTML\s*=\s*["'](\/\/[^"']+)["']\s*\+\s*["']([^"']+)["']/);
-    if(!m){
-      m=html.match(/["'](https?:\/\/[^"']+tapecontent\.net[^"']+)["']/);
-      if(!m) return null;
-      return [{name:"StreamTape",title:"StreamTape",url:m[1],quality:"auto",headers:{"User-Agent":UA,Referer:"https://streamtape.com/"}}];
-    }
-    return [{name:"StreamTape",title:"StreamTape",url:"https:"+m[1]+m[2],quality:"auto",headers:{"User-Agent":UA,Referer:"https://streamtape.com/"}}];
-  }).catch(function(e){console.log("[PornWatch] StreamTape: "+e.message);return null;});
-}
-
-// ── Generic fallback ──────────────────────────────────────────────────────────
-function extractGeneric(url) {
-  try{var host=new URL(url).origin;}catch(e){return Promise.resolve(null);}
-  return fetchText(url,{Referer:BASE_URL+"/"}).then(function(html){
-    var $=cheerio.load(html);
-    var fu=findInScripts($,function(up){var m=up.match(/file\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/i);return m?m[1]:null;});
-    if(!fu) return null;
-    return [{name:"Video",title:"Video",url:fu,quality:"auto",headers:{Referer:host+"/"}}];
-  }).catch(function(){return null;});
-}
-
-// ── Host routing ──────────────────────────────────────────────────────────────
-var H={
-  dood: ["myvidplay.com","doply.net","ds2play.com","d000d.com","dood.pm","dooood.com","playmogo.com"],
-  tape: ["streamtape.com","streamtape.net"],
-  p4me: ["player4me.online","player4me.vip"],
-  upns: ["upns.online","upns.vip"],
-  easy: ["easyvidplayer.com"],
-  rpm:  ["rpmplay.online"],
-  emb:  ["embedseek.online","seekplayer.vip"]
+  return to;
 };
-function has(list,url){return list.some(function(h){return url.includes(h);});}
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
 
-function extractFromUrl(url) {
-  if(has(H.dood,url))  return extractDood(url);
-  if(has(H.tape,url))  return extractStreamTape(url);
-  if(has(H.p4me,url))  return extractHashPlayer(url,"Player4Me");
-  if(has(H.upns,url))  return extractHashPlayer(url,"UPNS");
-  if(has(H.easy,url))  return extractHashPlayer(url,"EasyVidPlayer");
-  if(has(H.rpm,url))   return extractHashPlayer(url,"RPMPlay");
-  if(has(H.emb,url))   return extractHashPlayer(url,"EmbedSeek");
-  return extractGeneric(url);
-}
-
-// ── Search ────────────────────────────────────────────────────────────────────
-function cleanQ(t){return t.toLowerCase().replace(/\bthe\b/g,"").replace(/[':!?,.–—]/g,"").replace(/\s+/g," ").trim();}
-function titleScore(a,b){
-  var ca=cleanQ(a),cb=cleanQ(b); if(ca===cb) return 1;
-  var wa=ca.split(" "),wb=new Set(cb.split(" "));
-  var hits=wa.filter(function(w){return w.length>2&&wb.has(w);}).length;
-  return hits/Math.max(wa.length,wb.size);
-}
-
-function searchSite(query) {
-  return fetchText(BASE_URL+"/?s="+encodeURIComponent(query)).then(function(html){
-    var $=cheerio.load(html), results=[];
-    $("div.ml-item").each(function(_,el){
-      var title=$(el).find("h2").first().text().trim();
-      var href=fixUrl($(el).find("a").first().attr("href"));
-      if(title&&href&&!isBlocked(title)) results.push({title:title,href:href});
-    });
-    console.log("[PornWatch] '"+query+"' → "+results.length+" results");
-    return results;
+// src/shared/http.js
+var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0";
+var HEADERS = {
+  "User-Agent": UA
+};
+async function fetchText(url, options = {}) {
+  const response = await fetch(url, {
+    headers: { ...HEADERS, ...options.headers },
+    ...options
   });
+  if (!response.ok)
+    throw new Error(`HTTP ${response.status} for ${url}`);
+  return response.text();
 }
-
-function getVideoLinks(pageUrl) {
-  return fetchText(pageUrl,{Referer:BASE_URL+"/"}).then(function(html){
-    var $=cheerio.load(html), links=[];
-    $("#pettabs").find(".Rtable1-cell a").each(function(_,el){
-      var href=fixUrl($(el).attr("href"),pageUrl);
-      if(href) links.push(href);
+async function fetchJson(url, options = {}) {
+  const raw = await fetchText(url, options);
+  return JSON.parse(raw);
+}
+async function getTitleFromTmdb(tmdbId, mediaType) {
+  try {
+    const endpoint = mediaType === "tv" ? `https://api.themoviedb.org/3/tv/${tmdbId}` : `https://api.themoviedb.org/3/movie/${tmdbId}`;
+    const res = await fetch(`${endpoint}?language=en-US`, {
+      headers: { Authorization: `Bearer ${typeof TMDB_READ_TOKEN !== "undefined" ? TMDB_READ_TOKEN : ""}` }
     });
-    console.log("[PornWatch] links: "+links.join("|"));
-    return links;
+    if (!res.ok)
+      return null;
+    const data = await res.json();
+    return data.title || data.name || null;
+  } catch {
+    return null;
+  }
+}
+
+// src/shared/extractors.js
+function base64UrlToBytes(str) {
+  const b64 = str.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = b64 + "=".repeat((4 - b64.length % 4) % 4);
+  const binary = atob(padded);
+  return Uint8Array.from(binary, (c) => c.charCodeAt(0));
+}
+function textToBytes(str) {
+  return new TextEncoder().encode(str);
+}
+async function aesGcmDecrypt(keyBytes, ivB64url, payloadB64url) {
+  const iv = base64UrlToBytes(ivB64url);
+  const data = base64UrlToBytes(payloadB64url);
+  const key = await crypto.subtle.importKey("raw", keyBytes, { name: "AES-GCM" }, false, ["decrypt"]);
+  const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv, tagLength: 128 }, key, data);
+  return new TextDecoder("iso-8859-1").decode(decrypted);
+}
+async function aesCbcDecrypt(cipherB64, keyStr, ivStr) {
+  const keyBytes = textToBytes(keyStr);
+  const ivBytes = textToBytes(ivStr);
+  const data = base64UrlToBytes(cipherB64);
+  const key = await crypto.subtle.importKey("raw", keyBytes, { name: "AES-CBC" }, false, ["decrypt"]);
+  const decrypted = await crypto.subtle.decrypt({ name: "AES-CBC", iv: ivBytes }, key, data);
+  return new TextDecoder().decode(decrypted);
+}
+var DOOD_HOSTS = [
+  "myvidplay.com",
+  "doply.net",
+  "playmogo.com",
+  "dood.pm",
+  "ds2play.com",
+  "d000d.com"
+];
+function isDoodStream(url) {
+  return DOOD_HOSTS.some((h) => url.includes(h));
+}
+async function extractDoodStream(url) {
+  try {
+    const embedUrl = url.replace("doply.net", "myvidplay.com");
+    const refHost = "https://myvidplay.com";
+    const html = await fetchText(embedUrl, {
+      headers: { "User-Agent": UA, "Referer": refHost }
+    });
+    const md5Match = html.match(/\/pass_md5\/([^/]*)\/([^/']*)/);
+    if (!md5Match)
+      return null;
+    const [fullPath, expiry, token] = md5Match;
+    const md5Url = refHost + fullPath;
+    const baseLink = (await fetchText(md5Url, {
+      headers: { "User-Agent": UA, "Referer": embedUrl }
+    })).trim();
+    const directUrl = token && expiry ? `${baseLink}?token=${token}&expiry=${expiry}000` : baseLink;
+    return [{
+      name: "DoodStream",
+      title: "DoodStream",
+      url: directUrl,
+      quality: "auto",
+      headers: { "User-Agent": UA, "Referer": refHost }
+    }];
+  } catch {
+    return null;
+  }
+}
+var FILEMOON_HOSTS = [
+  "filemoon.to",
+  "filemoon.in",
+  "filemoon.sx",
+  "bysedikamoum.com",
+  "bysezoxexe.com",
+  "x08.ovh",
+  "javmoon.me"
+];
+function isFilemoon(url) {
+  return FILEMOON_HOSTS.some((h) => url.includes(h));
+}
+async function extractFilemoon(url) {
+  try {
+    const mediaId = (url.match(/\/(?:e|d|v|f|download)\/([0-9a-zA-Z]+)/) || [])[1] || url.split("/").pop().split("?")[0];
+    const host = new URL(url).host;
+    const rootRef = `https://${host}/`;
+    const apiUrl = `https://${host}/api/videos/${mediaId}/embed/playback`;
+    const headers = {
+      "User-Agent": UA,
+      "Referer": rootRef,
+      "Origin": `https://${host}`,
+      "X-Requested-With": "XMLHttpRequest"
+    };
+    const json = await fetchJson(apiUrl, { headers });
+    let sources = json.sources;
+    if (!sources && json.playback) {
+      const pb = json.playback;
+      const keyParts = pb.key_parts.map((p) => base64UrlToBytes(p));
+      const keyBytes = new Uint8Array(keyParts.reduce((acc, b) => [...acc, ...b], []));
+      const plain = await aesGcmDecrypt(keyBytes, pb.iv, pb.payload);
+      sources = JSON.parse(plain).sources;
+    }
+    if (!sources)
+      return null;
+    return sources.map((s) => ({
+      name: "Filemoon",
+      title: s.label ? `Filemoon ${s.label}p` : "Filemoon",
+      url: s.url,
+      quality: s.label || "auto",
+      headers: { "Referer": rootRef, "User-Agent": UA }
+    }));
+  } catch {
+    return null;
+  }
+}
+var LULU_HOSTS = [
+  "lulustream.com",
+  "luluvid.com",
+  "luluvdo.com",
+  "luluvdoo.com",
+  "lulupvp.com",
+  "lulu.dlc.ovh",
+  "lulu0.ovh"
+];
+function isLuluStream(url) {
+  return LULU_HOSTS.some((h) => url.includes(h));
+}
+async function extractLuluStream(url) {
+  try {
+    const embedUrl = url.replace("/d/", "/e/");
+    const origin = new URL(embedUrl).origin;
+    const html = await fetchText(embedUrl, {
+      headers: {
+        "User-Agent": UA,
+        "Referer": url,
+        "Origin": origin
+      }
+    });
+    const m3u8Match = html.match(/["']([^"']+\.m3u8[^"']*)["']/);
+    if (!m3u8Match)
+      return null;
+    return [{
+      name: "LuluStream",
+      title: "LuluStream",
+      url: m3u8Match[1],
+      quality: "auto",
+      headers: { "Referer": embedUrl, "Origin": origin, "User-Agent": UA }
+    }];
+  } catch {
+    return null;
+  }
+}
+var PLAYER4ME_HOSTS = [
+  "player4me.online",
+  "player4me.vip",
+  "rpmplay.online"
+];
+function isPlayer4Me(url) {
+  return PLAYER4ME_HOSTS.some((h) => url.includes(h));
+}
+async function extractPlayer4Me(url) {
+  try {
+    const mainUrl = new URL(url).origin;
+    const id = url.split("#")[1] || url.split("/").pop();
+    const apiUrl = `${mainUrl}/api/v1/video?id=${id}`;
+    const raw = (await fetchText(apiUrl, {
+      headers: {
+        "Host": new URL(url).host,
+        "User-Agent": UA,
+        "Accept": "*/*",
+        "Cookie": "popunderCount/=1",
+        "Referer": mainUrl + "/"
+      }
+    })).trim();
+    if (raw.startsWith("<html>"))
+      return null;
+    const plain = await aesCbcDecrypt(raw, "kiemtienmua911ca", "1234567890oiuytr");
+    const data = JSON.parse(plain);
+    const videoUrl = data.source || data.hls || data.cf;
+    if (!videoUrl)
+      return null;
+    return [{
+      name: "Player4Me",
+      title: "Player4Me",
+      url: videoUrl,
+      quality: "auto",
+      headers: { "User-Agent": UA, "Referer": mainUrl + "/" }
+    }];
+  } catch {
+    return null;
+  }
+}
+function isVidguard(url) {
+  return url.includes("vidguard.to");
+}
+async function extractVidguard(url) {
+  try {
+    const html = await fetchText(url, { headers: { "User-Agent": UA } });
+    const sigMatch = html.match(/sig=([a-fA-F0-9]+)/);
+    if (!sigMatch)
+      return null;
+    let sig = sigMatch[1];
+    let t = "";
+    for (let i = 0; i < sig.length; i += 2) {
+      t += String.fromCharCode(parseInt(sig.slice(i, i + 2), 16) ^ 2);
+    }
+    const padding = [0, 0, 2, 1][t.length % 4];
+    const decoded = atob(t + "=".repeat(padding));
+    let s = decoded.slice(0, -5).split("").reverse().join("");
+    const arr = s.split("");
+    for (let i = 0; i < arr.length - 1; i += 2) {
+      [arr[i], arr[i + 1]] = [arr[i + 1], arr[i]];
+    }
+    const modifiedSig = arr.join("").slice(0, -5);
+    const streamUrl = url.replace(sigMatch[1], modifiedSig);
+    return [{
+      name: "Vidguard",
+      title: "Vidguard",
+      url: streamUrl,
+      quality: "auto",
+      headers: { "Referer": "https://vidguard.to", "User-Agent": UA }
+    }];
+  } catch {
+    return null;
+  }
+}
+function isVidNest(url) {
+  return url.includes("vidnest.io");
+}
+async function extractVidNest(url) {
+  try {
+    const html = await fetchText(url, {
+      headers: { "User-Agent": UA, "Referer": "https://vidnest.io/" }
+    });
+    const fileMatch = html.match(/file\s*:\s*["']([^"']+\.mp4[^"']*)["']/);
+    const labelMatch = html.match(/label\s*:\s*["']([^"']+)["']/);
+    if (!fileMatch)
+      return null;
+    return [{
+      name: "VidNest",
+      title: `VidNest ${labelMatch?.[1] || ""}`.trim(),
+      url: fileMatch[1],
+      quality: labelMatch?.[1] || "auto",
+      headers: { "User-Agent": UA, "Referer": "https://vidnest.io/", "Origin": "https://vidnest.io" }
+    }];
+  } catch {
+    return null;
+  }
+}
+var STREAMWISH_HOSTS = [
+  "streamwish.to",
+  "streamhihi.com",
+  "javsw.me",
+  "swhoi.com"
+];
+function isStreamwish(url) {
+  return STREAMWISH_HOSTS.some((h) => url.includes(h));
+}
+async function extractStreamwish(url) {
+  try {
+    const html = await fetchText(url, { headers: { "User-Agent": UA } });
+    const fileMatch = html.match(/file:\s*["']([^"']+)["']/);
+    if (!fileMatch)
+      return null;
+    return [{
+      name: "Streamwish",
+      title: "Streamwish",
+      url: fileMatch[1],
+      quality: "auto",
+      headers: { "User-Agent": UA }
+    }];
+  } catch {
+    return null;
+  }
+}
+var VIDHIDE_HOSTS = ["vidhidepro.com", "vidhidevip.com", "javlion.xyz"];
+function isVidhidepro(url) {
+  return VIDHIDE_HOSTS.some((h) => url.includes(h));
+}
+async function extractVidhidepro(url) {
+  try {
+    const html = await fetchText(url, { headers: { "User-Agent": UA } });
+    const fileMatch = html.match(/sources:\s*\[\s*\{\s*file:\s*"([^"]+\.m3u8[^"]*)"/);
+    if (!fileMatch)
+      return null;
+    return [{
+      name: "Vidhidepro",
+      title: "Vidhidepro",
+      url: fileMatch[1],
+      quality: "auto",
+      headers: { "Referer": new URL(url).origin + "/", "User-Agent": UA }
+    }];
+  } catch {
+    return null;
+  }
+}
+function isMaxstream(url) {
+  return url.includes("maxstream.org");
+}
+async function extractMaxstream(url) {
+  try {
+    const html = await fetchText(url, { headers: { "User-Agent": UA } });
+    const packed = html.match(/function\(p,a,c,k,e,d\)[\s\S]+?(?=<\/script>)/)?.[0];
+    if (!packed)
+      return null;
+    const decoded = unpackJS(packed);
+    const fileMatch = decoded?.match(/file:\s*["']([^"']+)["']/);
+    if (!fileMatch)
+      return null;
+    return [{
+      name: "Maxstream",
+      title: "Maxstream",
+      url: fileMatch[1],
+      quality: "auto",
+      headers: { "User-Agent": UA }
+    }];
+  } catch {
+    return null;
+  }
+}
+function unpackJS(packed) {
+  try {
+    const match = packed.match(/\('([^']+)',(\d+),(\d+),'([^']+)'\.split\('\|'\)/);
+    if (!match)
+      return null;
+    const [, p, a, , k] = match;
+    const keywords = k.split("|");
+    return p.replace(/\b\w+\b/g, (w) => {
+      const n = parseInt(w, parseInt(a));
+      return keywords[n] || w;
+    });
+  } catch {
+    return null;
+  }
+}
+function isJavclan(url) {
+  return url.includes("javclan.com");
+}
+async function extractJavclan(url, referer) {
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": UA, "Referer": referer || url }
+    });
+    if (!res.ok)
+      return null;
+    const html = await res.text();
+    const fileMatch = html.match(/file:\s*["']([^"']+)["']/);
+    if (!fileMatch)
+      return null;
+    return [{
+      name: "Javclan",
+      title: "Javclan",
+      url: fileMatch[1],
+      quality: "auto",
+      headers: { "Referer": referer || url, "User-Agent": UA }
+    }];
+  } catch {
+    return null;
+  }
+}
+function isJavggvideo(url) {
+  return url.includes("javggvideo.xyz");
+}
+async function extractJavggvideo(url) {
+  try {
+    const html = await fetchText(url, { headers: { "User-Agent": UA } });
+    const link = html.split("var urlPlay = '")[1]?.split("';")[0];
+    if (!link)
+      return null;
+    return [{
+      name: "Javggvideo",
+      title: "Javggvideo",
+      url: link,
+      quality: "auto",
+      headers: { "User-Agent": UA }
+    }];
+  } catch {
+    return null;
+  }
+}
+async function extractFromUrl(url, referer) {
+  if (isDoodStream(url))
+    return extractDoodStream(url);
+  if (isFilemoon(url))
+    return extractFilemoon(url);
+  if (isLuluStream(url))
+    return extractLuluStream(url);
+  if (isPlayer4Me(url))
+    return extractPlayer4Me(url);
+  if (isVidguard(url))
+    return extractVidguard(url);
+  if (isVidNest(url))
+    return extractVidNest(url);
+  if (isStreamwish(url))
+    return extractStreamwish(url);
+  if (isVidhidepro(url))
+    return extractVidhidepro(url);
+  if (isMaxstream(url))
+    return extractMaxstream(url);
+  if (isJavclan(url))
+    return extractJavclan(url, referer);
+  if (isJavggvideo(url))
+    return extractJavggvideo(url);
+  return null;
+}
+
+// src/shared/filters.js
+var BLOCKED_WORDS = [
+  "gay",
+  "homosexual",
+  "queer",
+  "homo",
+  "androphile",
+  "femboy",
+  "feminine boy",
+  "effeminate",
+  "trap",
+  "trans",
+  "Trade",
+  "Vers",
+  "Twink",
+  "Otter",
+  "Bear",
+  "Femme",
+  "Masc",
+  "Serving",
+  "Gagged",
+  "Twink",
+  "Kiki",
+  "Kai Kai",
+  "Werk",
+  "Realness",
+  "Hunty",
+  "Snatched",
+  "Clocked",
+  "Shade",
+  "Zaddy",
+  "Chosen family",
+  "Closet case",
+  "Henny",
+  "Queening out",
+  "Slay",
+  "Camp",
+  "Fishy",
+  "Cruising",
+  "Bathhouse",
+  "Power bottom",
+  "Situationship",
+  "Pegging",
+  "Femdom",
+  "futa",
+  "tranny",
+  "crossdress",
+  "Bisexual",
+  "Intersex",
+  "LGBTQ",
+  "TS",
+  "TGirl",
+  "T-Boy",
+  "Transsexual",
+  "t-girl",
+  "tgirl"
+];
+var BLOCKED_REGEX = new RegExp(
+  `\\b(?:${BLOCKED_WORDS.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\w*\\b`,
+  "i"
+);
+function isBlocked(title) {
+  return BLOCKED_REGEX.test(title);
+}
+
+// src/pornwatch/extractor.js
+var import_cheerio_without_node_native = __toESM(require("cheerio-without-node-native"));
+var BASE_URL = "https://pornwatch.ws";
+async function searchSite(query) {
+  const url = `${BASE_URL}/?s=${encodeURIComponent(query)}`;
+  const html = await fetchText(url);
+  const $ = import_cheerio_without_node_native.default.load(html);
+  const results = [];
+  $("div.ml-item").each((_, el) => {
+    const title = $(el).find("h2").text().trim();
+    const href = $(el).find("a").attr("href");
+    if (title && href && !isBlocked(title)) {
+      results.push({ title, href });
+    }
   });
+  return results;
+}
+async function getVideoLinks(pageUrl) {
+  const html = await fetchText(pageUrl);
+  const $ = import_cheerio_without_node_native.default.load(html);
+  const links = [];
+  const pettabs = $("div#pettabs");
+  pettabs.find("div.Rtable1-cell a").each((_, el) => {
+    const href = $(el).attr("href");
+    if (href)
+      links.push(href);
+  });
+  return links;
+}
+async function extractStreams(tmdbId, mediaType, season, episode) {
+  const title = await getTitleFromTmdb(tmdbId, mediaType);
+  const query = title || String(tmdbId);
+  const results = await searchSite(query);
+  if (!results.length)
+    return [];
+  const streams = [];
+  for (const result of results.slice(0, 3)) {
+    const videoLinks = await getVideoLinks(result.href);
+    for (const link of videoLinks) {
+      const extracted = await extractFromUrl(link, BASE_URL + "/");
+      if (extracted) {
+        streams.push(...extracted.map((s) => ({
+          ...s,
+          title: `[PornWatch] ${s.title}`
+        })));
+      }
+    }
+    if (streams.length > 0)
+      break;
+  }
+  return streams;
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
-function getStreams(tmdbId, mediaType, season, episode) {
-  console.log("[PornWatch] id="+tmdbId+" type="+mediaType);
-  return getTmdbTitle(tmdbId, mediaType)
-    .then(function(title){
-      if(!title){console.log("[PornWatch] no title");return [];}
-      console.log("[PornWatch] title="+title);
-      return searchSite(title).then(function(results){
-        if(!results||!results.length) return [];
-        results.forEach(function(r){r.score=titleScore(title,r.title);});
-        results.sort(function(a,b){return b.score-a.score;});
-        var chain=Promise.resolve([]);
-        results.slice(0,3).forEach(function(result){
-          chain=chain.then(function(streams){
-            if(streams.length) return streams;
-            return getVideoLinks(result.href)
-              .then(function(links){return Promise.all(links.map(extractFromUrl));})
-              .then(function(extracted){
-                var found=[];
-                extracted.forEach(function(items){if(items) items.forEach(function(s){found.push(Object.assign({},s,{title:"[PornWatch] "+s.title}));});});
-                return found;
-              });
-          });
-        });
-        return chain;
-      });
-    })
-    .catch(function(e){console.error("[PornWatch] "+e.message);return [];});
+// src/pornwatch/index.js
+async function getStreams(tmdbId, mediaType, season, episode) {
+  try {
+    console.log(`[PornWatch] Request: ${mediaType} ${tmdbId}`);
+    const streams = await extractStreams(tmdbId, mediaType, season, episode);
+    return streams;
+  } catch (error) {
+    console.error(`[PornWatch] Error: ${error.message}`);
+    return [];
+  }
 }
-
-if(typeof module!=="undefined"&&module.exports) module.exports={getStreams:getStreams};
-else global.getStreams=getStreams;
+module.exports = { getStreams };

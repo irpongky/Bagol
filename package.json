@@ -3,13 +3,14 @@
   "version": "1.0.0",
   "description": "Nuvio providers by kraptor",
   "scripts": {
+    "start": "node server.js",
     "build": "node build.js",
     "build:mangoporn": "node build.js mangoporn",
     "build:xxxparodyhd": "node build.js xxxparodyhd",
     "build:pornwatch": "node build.js pornwatch"
   },
   "dependencies": {
-    "cheerio-without-node-native": "^1.0.4",
-    "esbuild": "^0.20.0"
+    "cheerio-without-node-native": "^1.0.0-rc.2",
+    "esbuild": "^0.20.2"
   }
 }
