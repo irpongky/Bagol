@@ -1,6 +1,6 @@
 # Bagol Repo
 
-Nuvio providers by kraptor.
+Nuvio providers.
 
 ## Providers
 
