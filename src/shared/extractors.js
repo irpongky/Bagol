@@ -14,11 +14,18 @@ function base64UrlDecode(str) {
 }
 
 // AES-CBC decrypt using crypto-js (works in Hermes)
-function aesCbcDecrypt(cipherB64, keyStr, ivStr) {
-    const normalized = cipherB64.replace(/-/g, '+').replace(/_/g, '/');
+// Player4Me APIs return hex-encoded ciphertext, not base64.
+// CryptoJS requires CipherParams.create({ciphertext: Hex.parse(hex)}) for hex input.
+function aesCbcDecrypt(cipherHexOrB64, keyStr, ivStr) {
+    const normalized = cipherHexOrB64.replace(/-/g, '+').replace(/_/g, '/');
     const key = CryptoJS.enc.Utf8.parse(keyStr);
     const iv  = CryptoJS.enc.Utf8.parse(ivStr);
-    const decrypted = CryptoJS.AES.decrypt(normalized, key, {
+    // Detect hex vs base64 input
+    const isHex = /^[0-9a-fA-F]+$/.test(normalized);
+    const cipherParams = isHex
+        ? CryptoJS.lib.CipherParams.create({ ciphertext: CryptoJS.enc.Hex.parse(normalized) })
+        : normalized;
+    const decrypted = CryptoJS.AES.decrypt(cipherParams, key, {
         iv,
         mode: CryptoJS.mode.CBC,
         padding: CryptoJS.pad.Pkcs7,
@@ -48,14 +55,17 @@ export function isDoodStream(url) {
 
 export async function extractDoodStream(url) {
     try {
-        // Normalize known aliases to their canonical host
-        const embedUrl = url
-            .replace('doply.net', 'myvidplay.com')
-            .replace('d000d.com', 'myvidplay.com');
+        // Keep original URL/host — do NOT redirect to myvidplay.com (videos are per-host)
+        const embedUrl = url.replace('d000d.com', 'doodstream.com');
         const embedOrigin = new URL(embedUrl).origin;
 
         const html = await fetchText(embedUrl, {
-            headers: { 'User-Agent': UA, 'Referer': embedOrigin + '/' }
+            headers: {
+                'User-Agent': UA,
+                'Referer': embedOrigin + '/',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+            }
         });
 
         const md5Match = html.match(/\/pass_md5\/([^/]*)\/([^/']*)/);
@@ -215,19 +225,41 @@ export async function extractLuluStream(url) {
             }];
         }
 
-        // m3u8 in quotes
-        const m3u8Match = html.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/);
-        if (m3u8Match) {
+        // Direct m3u8 in quotes
+        const m3u8Direct = html.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/);
+        if (m3u8Direct) {
             return [{
                 name: 'LuluStream',
                 title: 'LuluStream',
-                url: m3u8Match[1],
+                url: m3u8Direct[1],
                 quality: 'auto',
                 headers: { 'Referer': embedUrl, 'Origin': origin, 'User-Agent': UA }
             }];
         }
 
-        // relative m3u8
+        // p,a,c,k obfuscated script (LuluStream uses this to hide m3u8 URLs)
+        // Use lazy [\s\S]+? instead of [^']+ to handle packed strings with escaped quotes
+        const packedBlock = html.match(/\}\s*\('[\s\S]+?'\s*\.split\('\|'\)\s*\)\s*\)/)?.[0]
+            || html.match(/\}\s*\('([\s\S]+?)',(\d+),(\d+),'([\s\S]+?)'\.split\('\|'\)/)?.[0];
+        if (packedBlock) {
+            const decoded = unpackJS(packedBlock);
+            if (decoded) {
+                const fileInPacked = decoded.match(/file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/);
+                const m3u8InPacked = decoded.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/);
+                const videoUrl = fileInPacked?.[1] || m3u8InPacked?.[1];
+                if (videoUrl) {
+                    return [{
+                        name: 'LuluStream',
+                        title: 'LuluStream',
+                        url: videoUrl,
+                        quality: 'auto',
+                        headers: { 'Referer': embedUrl, 'Origin': origin, 'User-Agent': UA }
+                    }];
+                }
+            }
+        }
+
+        // relative m3u8 fallback
         const relMatch = html.match(/["']([^"']+\.m3u8[^"']*)["']/);
         if (relMatch) {
             const videoUrl = relMatch[1].startsWith('http')
@@ -254,6 +286,7 @@ export async function extractLuluStream(url) {
 
 const PLAYER4ME_HOSTS = [
     'player4me.online', 'player4me.vip', 'rpmplay.online',
+    'seekplayer.vip', 'embedseek.online', 'easyvidplayer.com',
 ];
 
 export function isPlayer4Me(url) {
@@ -627,7 +660,9 @@ export async function extractMaxstream(url) {
 
 function unpackJS(packed) {
     try {
-        const match = packed.match(/\('([^']+)',(\d+),(\d+),'([^']+)'\.split\('\|'\)/);
+        // Use lazy [\s\S]+? to handle packed strings that may contain escaped quotes
+        const match = packed.match(/\('([\s\S]+?)',(\d+),(\d+),'([\s\S]+?)'\.split\('\|'\)/)
+            || packed.match(/\('([^']+)',(\d+),(\d+),'([^']+)'\.split\('\|'\)/);
         if (!match) return null;
         const [, p, a, , k] = match;
         const keywords = k.split('|');
@@ -828,13 +863,22 @@ export async function extractStreamtape(url) {
     try {
         const html = await fetchText(url, { headers: { 'User-Agent': UA, 'Referer': url } });
 
-        // StreamTape obfuscates the link across two parts in the HTML
-        // Pattern: document.getElementById('...').innerHTML = "..."; + another partial string
-        const tokenMatch = html.match(/document\.getElementById\('[^']+'\)\.innerHTML\s*=\s*["']([^"']+)["']/);
-        const token2Match = html.match(/\+\s*["']([^"']+)["']\s*;/);
-        if (tokenMatch && token2Match) {
-            const raw = (tokenMatch[1] + token2Match[1]).replace(/\s/g, '');
-            const videoUrl = raw.startsWith('//') ? 'https:' + raw : (raw.startsWith('http') ? raw : 'https://' + raw);
+        // StreamTape obfuscates via: '//streamtape.com/get_vid' + ('xcdeo?id=...').substring(2).substring(1)
+        // Find ALL robotlink/botlink assignments and use the LAST one (most correct)
+        const stRegex = /getElementById\(['"](?:robotlink|botlink|ideoolink)['"]\)[^.]*\.innerHTML\s*=\s*['"]([^'"]+)['"]\s*\+\s*\(['"]([^'"]+)['"]\)((?:\.substring\(\d+\))*)/g;
+        let stMatch, lastMatch;
+        while ((stMatch = stRegex.exec(html)) !== null) lastMatch = stMatch;
+
+        if (lastMatch) {
+            let [, part1, raw2, substrs] = lastMatch;
+            // Apply chained .substring(N) calls
+            const subNums = substrs.match(/\d+/g) || [];
+            for (const n of subNums) raw2 = raw2.substring(parseInt(n));
+            const raw = (part1 + raw2).replace(/\s/g, '');
+            const videoUrl = raw.startsWith('http') ? raw
+                : raw.startsWith('//') ? 'https:' + raw
+                : raw.startsWith('/') ? 'https://streamtape.com' + raw
+                : 'https://' + raw;
             return [{
                 name: 'StreamTape',
                 title: 'StreamTape',
@@ -844,20 +888,25 @@ export async function extractStreamtape(url) {
             }];
         }
 
-        // Alternative: robotlink / idelink pattern
-        const robotMatch = html.match(/id=["']robotlink["'][^>]*>([^<]+)<\/[^>]+>\s*<[^>]+>([^<]+)</);
-        if (robotMatch) {
-            const videoUrl = 'https:' + robotMatch[1] + robotMatch[2].trim();
-            return [{
-                name: 'StreamTape',
-                title: 'StreamTape',
-                url: videoUrl,
-                quality: 'auto',
-                headers: { 'User-Agent': UA, 'Referer': url }
-            }];
+        // Fallback: static robotlink div content
+        const robotDiv = html.match(/id=["']robotlink["'][^>]*>([^<]+)</);
+        if (robotDiv) {
+            const raw = robotDiv[1].trim();
+            const videoUrl = raw.startsWith('//') ? 'https:' + raw
+                : raw.startsWith('/') ? 'https://streamtape.com' + raw
+                : raw;
+            if (videoUrl.includes('streamtape') || videoUrl.includes('get_video')) {
+                return [{
+                    name: 'StreamTape',
+                    title: 'StreamTape',
+                    url: videoUrl,
+                    quality: 'auto',
+                    headers: { 'User-Agent': UA, 'Referer': url }
+                }];
+            }
         }
 
-        // bare mp4
+        // bare mp4 fallback
         const mp4Match = html.match(/["'](https?:\/\/[^"']+\.mp4[^"']*)["']/);
         if (mp4Match) {
             return [{
@@ -866,6 +915,93 @@ export async function extractStreamtape(url) {
                 url: mp4Match[1],
                 quality: 'auto',
                 headers: { 'User-Agent': UA, 'Referer': url }
+            }];
+        }
+
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+// ─────────────────────────────────────────────
+// VOE  (voe.sx and mirrors)
+// ─────────────────────────────────────────────
+
+const VOE_HOSTS = [
+    'voe.sx', 'voe.bar', 'voe.stream', 'voeun.net', 'voeus.com',
+    'volescalen.com', 'voecarriage.com', 'voefence.com', 'voeshine.com',
+];
+
+export function isVoe(url) {
+    return VOE_HOSTS.some(h => url.includes(h));
+}
+
+export async function extractVoe(url) {
+    try {
+        const origin = new URL(url).origin;
+        const html = await fetchText(url, {
+            headers: {
+                'User-Agent': UA,
+                'Referer': origin + '/',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            }
+        });
+
+        // hls: "..." pattern (Voe uses this in their player config)
+        const hlsMatch = html.match(/['"]hls['"]\s*:\s*['"]([^'"]+)['"]/);
+        if (hlsMatch) {
+            return [{
+                name: 'VOE',
+                title: 'VOE',
+                url: hlsMatch[1],
+                quality: 'auto',
+                headers: { 'Referer': origin + '/', 'User-Agent': UA }
+            }];
+        }
+
+        // sources:[{file:"..."}]
+        const sourcesMatch = html.match(/sources\s*:\s*\[\s*\{[^}]*?file\s*:\s*["']([^"']+)["']/);
+        if (sourcesMatch) {
+            return [{
+                name: 'VOE',
+                title: 'VOE',
+                url: sourcesMatch[1],
+                quality: 'auto',
+                headers: { 'Referer': origin + '/', 'User-Agent': UA }
+            }];
+        }
+
+        // p,a,c,k packed script
+        const packedBlock = html.match(/\}\s*\('([^']+)',(\d+),(\d+),'([^']+)'\.split\('\|'\)/)?.[0];
+        if (packedBlock) {
+            const decoded = unpackJS(packedBlock);
+            if (decoded) {
+                const hlsInPacked = decoded.match(/['"]hls['"]\s*:\s*['"]([^'"]+\.m3u8[^'"]*)['"]/);
+                const fileInPacked = decoded.match(/file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/);
+                const m3u8InPacked = decoded.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/);
+                const videoUrl = hlsInPacked?.[1] || fileInPacked?.[1] || m3u8InPacked?.[1];
+                if (videoUrl) {
+                    return [{
+                        name: 'VOE',
+                        title: 'VOE',
+                        url: videoUrl,
+                        quality: 'auto',
+                        headers: { 'Referer': origin + '/', 'User-Agent': UA }
+                    }];
+                }
+            }
+        }
+
+        // bare m3u8
+        const m3u8Match = html.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/);
+        if (m3u8Match) {
+            return [{
+                name: 'VOE',
+                title: 'VOE',
+                url: m3u8Match[1],
+                quality: 'auto',
+                headers: { 'Referer': origin + '/', 'User-Agent': UA }
             }];
         }
 
@@ -893,6 +1029,7 @@ const ALL_KNOWN_HOSTS = [
     'javggvideo.xyz', 'javgg.net',
     'mixdrop.', 'mixdrp.',
     ...STREAMTAPE_HOSTS,
+    ...VOE_HOSTS,
 ];
 
 export function isKnownEmbedHost(url) {
@@ -921,5 +1058,6 @@ export async function extractFromUrl(url, referer) {
     if (isJavggvideo(url))     return extractJavggvideo(url);
     if (isMixDrop(url))        return extractMixDrop(url);
     if (isStreamtape(url))     return extractStreamtape(url);
+    if (isVoe(url))            return extractVoe(url);
     return null;
 }
