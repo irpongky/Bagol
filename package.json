@@ -5,6 +5,7 @@
   "scripts": {
     "start": "node server.js",
     "build": "node build.js",
+    "build:minify": "node build.js --minify",
     "build:mangoporn": "node build.js mangoporn",
     "build:xxxparodyhd": "node build.js xxxparodyhd",
     "build:pornwatch": "node build.js pornwatch"

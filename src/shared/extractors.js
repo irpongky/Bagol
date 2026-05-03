@@ -1,36 +1,34 @@
 import { fetchText, fetchJson, UA } from './http.js';
+// crypto-js is provided by the Nuvio app runtime (external, not bundled)
+import CryptoJS from 'crypto-js';
 
 // ─────────────────────────────────────────────
 // Utilities
 // ─────────────────────────────────────────────
 
-function base64UrlToBytes(str) {
-    const b64 = str.replace(/-/g, '+').replace(/_/g, '/');
-    const padded = b64 + '='.repeat((4 - b64.length % 4) % 4);
-    const binary = atob(padded);
-    return Uint8Array.from(binary, c => c.charCodeAt(0));
+// base64url → string (atob is available as a global in React Native / Hermes)
+function base64UrlDecode(str) {
+    return atob(str.replace(/-/g, '+').replace(/_/g, '/').padEnd(
+        str.length + (4 - str.length % 4) % 4, '='
+    ));
 }
 
-function textToBytes(str) {
-    return new TextEncoder().encode(str);
+// AES-CBC decrypt using crypto-js (works in Hermes)
+function aesCbcDecrypt(cipherB64, keyStr, ivStr) {
+    const normalized = cipherB64.replace(/-/g, '+').replace(/_/g, '/');
+    const key = CryptoJS.enc.Utf8.parse(keyStr);
+    const iv  = CryptoJS.enc.Utf8.parse(ivStr);
+    const decrypted = CryptoJS.AES.decrypt(normalized, key, {
+        iv,
+        mode: CryptoJS.mode.CBC,
+        padding: CryptoJS.pad.Pkcs7,
+    });
+    return decrypted.toString(CryptoJS.enc.Utf8);
 }
 
-async function aesGcmDecrypt(keyBytes, ivB64url, payloadB64url) {
-    const iv = base64UrlToBytes(ivB64url);
-    const data = base64UrlToBytes(payloadB64url);
-    const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['decrypt']);
-    const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv, tagLength: 128 }, key, data);
-    return new TextDecoder('iso-8859-1').decode(decrypted);
-}
-
-async function aesCbcDecrypt(cipherB64, keyStr, ivStr) {
-    const keyBytes = textToBytes(keyStr);
-    const ivBytes = textToBytes(ivStr);
-    const data = base64UrlToBytes(cipherB64);
-    const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-CBC' }, false, ['decrypt']);
-    const decrypted = await crypto.subtle.decrypt({ name: 'AES-CBC', iv: ivBytes }, key, data);
-    return new TextDecoder().decode(decrypted);
-}
+// NOTE: AES-GCM is NOT supported by crypto-js and crypto.subtle is unavailable
+// in Hermes (React Native). Filemoon's encrypted API path will fall through to
+// the HTML fallback — that's intentional.
 
 // ─────────────────────────────────────────────
 // DoodStream  (myvidplay.com / doply.net / playmogo.com / dood.*)
@@ -116,19 +114,11 @@ export async function extractFilemoon(url) {
             'X-Requested-With': 'XMLHttpRequest'
         };
 
-        // Try API first
+        // Try API first (unencrypted sources only — AES-GCM not available in Hermes)
         try {
             const apiUrl = `https://${host}/api/videos/${mediaId}/embed/playback`;
             const json = await fetchJson(apiUrl, { headers });
-            let sources = json.sources;
-
-            if (!sources && json.playback) {
-                const pb = json.playback;
-                const keyParts = pb.key_parts.map(p => base64UrlToBytes(p));
-                const keyBytes = new Uint8Array(keyParts.reduce((acc, b) => [...acc, ...b], []));
-                const plain = await aesGcmDecrypt(keyBytes, pb.iv, pb.payload);
-                sources = JSON.parse(plain).sources;
-            }
+            const sources = json.sources;
 
             if (sources && sources.length) {
                 return sources.map(s => ({
