@@ -1,44 +1,11 @@
-import { fetchText, getTitleFromTmdb, getYearFromTmdb } from '../shared/http.js';
+import { fetchText, getTitleFromTmdb } from '../shared/http.js';
 import { extractFromUrl, isKnownEmbedHost } from '../shared/extractors.js';
 import { isBlocked } from '../shared/filters.js';
 import cheerio from 'cheerio-without-node-native';
 
 const BASE_URL = 'https://pornwatch.ws';
 
-// Extract year from title strings like "Title (2023)" or "Title 2023"
-function extractYearFromTitle(title) {
-    const match = title.match(/\((\d{4})\)/) || title.match(/\b(19\d{2}|20\d{2})\b/);
-    return match ? parseInt(match[1]) : null;
-}
-
-// Clean title for comparison
-function cleanTitle(title) {
-    return title
-        .replace(/\(\d{4}\)/g, '')
-        .replace(/\b(19\d{2}|20\d{2})\b/g, '')
-        .replace(/[^a-zA-Z0-9\s]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .toLowerCase();
-}
-
-// Calculate similarity between two titles
-function titleSimilarity(a, b) {
-    const cleanA = cleanTitle(a);
-    const cleanB = cleanTitle(b);
-
-    if (cleanA === cleanB) return 1.0;
-    if (cleanA.includes(cleanB) || cleanB.includes(cleanA)) return 0.9;
-
-    const wordsA = new Set(cleanA.split(' ').filter(w => w.length > 2));
-    const wordsB = new Set(cleanB.split(' ').filter(w => w.length > 2));
-    const intersection = [...wordsA].filter(w => wordsB.has(w));
-    const union = new Set([...wordsA, ...wordsB]);
-
-    return intersection.length / union.size;
-}
-
-async function searchSite(query, tmdbYear = null) {
+async function searchSite(query) {
     const url = `${BASE_URL}/?s=${encodeURIComponent(query)}`;
     const html = await fetchText(url);
     const $ = cheerio.load(html);
@@ -48,9 +15,7 @@ async function searchSite(query, tmdbYear = null) {
         const title = $(el).find('h2').text().trim() || $(el).find('h3').text().trim();
         const href = $(el).find('a').first().attr('href');
         if (title && href && !isBlocked(title)) {
-            const resultYear = extractYearFromTitle(title);
-            const similarity = titleSimilarity(title, query);
-            results.push({ title, href, year: resultYear, similarity });
+            results.push({ title, href });
         }
     });
 
@@ -60,23 +25,8 @@ async function searchSite(query, tmdbYear = null) {
             const title = $(el).find('h2, h3, .title').first().text().trim();
             const href = $(el).find('a').first().attr('href');
             if (title && href && href.startsWith('http') && !isBlocked(title)) {
-                const resultYear = extractYearFromTitle(title);
-                const similarity = titleSimilarity(title, query);
-                results.push({ title, href, year: resultYear, similarity });
+                results.push({ title, href });
             }
-        });
-    }
-
-    // Sort by similarity (best match first)
-    results.sort((a, b) => b.similarity - a.similarity);
-
-    // If TMDB year is available, boost results with matching year
-    if (tmdbYear) {
-        results.sort((a, b) => {
-            const aMatch = a.year === tmdbYear ? 1 : 0;
-            const bMatch = b.year === tmdbYear ? 1 : 0;
-            if (aMatch !== bMatch) return bMatch - aMatch;
-            return b.similarity - a.similarity;
         });
     }
 
@@ -131,21 +81,14 @@ async function getVideoLinks(pageUrl) {
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {
     const title = await getTitleFromTmdb(tmdbId, mediaType);
-    const tmdbYear = await getYearFromTmdb(tmdbId, mediaType);
     const query = title || String(tmdbId);
 
-    const results = await searchSite(query, tmdbYear);
+    const results = await searchSite(query);
     if (!results.length) return [];
 
     const streams = [];
 
     for (const result of results.slice(0, 3)) {
-        // Skip if year doesn't match (when we have TMDB year and result has a year)
-        if (tmdbYear && result.year && result.year !== tmdbYear && result.similarity < 0.8) {
-            console.log(`[PornWatch] Skipping "${result.title}" - year mismatch (${result.year} vs ${tmdbYear})`);
-            continue;
-        }
-
         const videoLinks = await getVideoLinks(result.href);
 
         for (const link of videoLinks) {

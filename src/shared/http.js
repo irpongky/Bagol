@@ -34,3 +34,26 @@ export async function getTitleFromTmdb(tmdbId, mediaType) {
         return null;
     }
 }
+
+// NEW: Get release year from TMDB for year matching
+export async function getYearFromTmdb(tmdbId, mediaType) {
+    try {
+        const endpoint = mediaType === "tv"
+            ? `${TMDB_BASE_URL}/tv/${tmdbId}`
+            : `${TMDB_BASE_URL}/movie/${tmdbId}`;
+        const res = await fetch(`${endpoint}?language=en-US&api_key=${TMDB_API_KEY}`);
+        if (!res.ok) return null;
+        const data = await res.json();
+
+        // For movies: release_date is "YYYY-MM-DD"
+        // For TV: first_air_date is "YYYY-MM-DD"
+        const dateStr = data.release_date || data.first_air_date;
+        if (dateStr) {
+            const year = parseInt(dateStr.split('-')[0]);
+            return isNaN(year) ? null : year;
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
