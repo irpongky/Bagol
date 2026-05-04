@@ -1,4 +1,4 @@
-import { fetchText, getTitleFromTmdb } from '../shared/http.js';
+import { fetchText, getMetadataFromTmdb } from '../shared/http.js';
 import { extractFromUrl, isKnownEmbedHost } from '../shared/extractors.js';
 import { isBlocked } from '../shared/filters.js';
 import cheerio from 'cheerio-without-node-native';
@@ -79,16 +79,39 @@ async function getVideoLinks(pageUrl) {
     return [...links];
 }
 
+function normalize(text) {
+    return text.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 export async function extractStreams(tmdbId, mediaType, season, episode) {
-    const title = await getTitleFromTmdb(tmdbId, mediaType);
+    const metadata = await getMetadataFromTmdb(tmdbId, mediaType);
+    if (!metadata) return [];
+    const { title, year } = metadata;
     const query = title || String(tmdbId);
 
     const results = await searchSite(query);
     if (!results.length) return [];
 
     const streams = [];
+    const normalizedTargetTitle = normalize(title);
 
-    for (const result of results.slice(0, 3)) {
+    for (const result of results) {
+        const normalizedResultTitle = normalize(result.title);
+        
+        // Basic title match check
+        if (!normalizedResultTitle.includes(normalizedTargetTitle) && !normalizedTargetTitle.includes(normalizedResultTitle)) {
+            continue;
+        }
+
+        // Year check: if year is present in result title, it must match TMDB year
+        if (year) {
+            const yearMatch = result.title.match(/\b(19|20)\d{2}\b/);
+            if (yearMatch && yearMatch[0] !== year) {
+                console.log(`[PornWatch] Year mismatch for ${result.title}: expected ${year}, found ${yearMatch[0]}`);
+                continue;
+            }
+        }
+
         const videoLinks = await getVideoLinks(result.href);
 
         for (const link of videoLinks) {

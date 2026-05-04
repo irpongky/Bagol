@@ -81,7 +81,7 @@ function fetchJson(_0) {
 }
 var TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 var TMDB_BASE_URL = "https://api.themoviedb.org/3";
-function getTitleFromTmdb(tmdbId, mediaType) {
+function getMetadataFromTmdb(tmdbId, mediaType) {
   return __async(this, null, function* () {
     try {
       const endpoint = mediaType === "tv" ? `${TMDB_BASE_URL}/tv/${tmdbId}` : `${TMDB_BASE_URL}/movie/${tmdbId}`;
@@ -89,7 +89,10 @@ function getTitleFromTmdb(tmdbId, mediaType) {
       if (!res.ok)
         return null;
       const data = yield res.json();
-      return data.title || data.name || null;
+      const title = data.title || data.name || null;
+      const releaseDate = data.release_date || data.first_air_date || null;
+      const year = releaseDate ? releaseDate.split("-")[0] : null;
+      return { title, year };
     } catch (e) {
       return null;
     }
@@ -1151,15 +1154,33 @@ function getVideoLinks(pageUrl) {
     return [...links];
   });
 }
+function normalize(text) {
+  return text.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
 function extractStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
-    const title = yield getTitleFromTmdb(tmdbId, mediaType);
+    const metadata = yield getMetadataFromTmdb(tmdbId, mediaType);
+    if (!metadata)
+      return [];
+    const { title, year } = metadata;
     const query = title || String(tmdbId);
     const results = yield searchSite(query);
     if (!results.length)
       return [];
     const streams = [];
-    for (const result of results.slice(0, 3)) {
+    const normalizedTargetTitle = normalize(title);
+    for (const result of results) {
+      const normalizedResultTitle = normalize(result.title);
+      if (!normalizedResultTitle.includes(normalizedTargetTitle) && !normalizedTargetTitle.includes(normalizedResultTitle)) {
+        continue;
+      }
+      if (year) {
+        const yearMatch = result.title.match(/\b(19|20)\d{2}\b/);
+        if (yearMatch && yearMatch[0] !== year) {
+          console.log(`[Mangoporn] Year mismatch for ${result.title}: expected ${year}, found ${yearMatch[0]}`);
+          continue;
+        }
+      }
       const videoLinks = yield getVideoLinks(result.href);
       for (const link of videoLinks) {
         const extracted = yield extractFromUrl(link, result.href);
