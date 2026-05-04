@@ -95,6 +95,25 @@ function getTitleFromTmdb(tmdbId, mediaType) {
     }
   });
 }
+function getYearFromTmdb(tmdbId, mediaType) {
+  return __async(this, null, function* () {
+    try {
+      const endpoint = mediaType === "tv" ? `${TMDB_BASE_URL}/tv/${tmdbId}` : `${TMDB_BASE_URL}/movie/${tmdbId}`;
+      const res = yield fetch(`${endpoint}?language=en-US&api_key=${TMDB_API_KEY}`);
+      if (!res.ok) return null;
+      const data = yield res.json();
+      const dateStr = data.release_date || data.first_air_date;
+      if (dateStr) {
+        const year = parseInt(dateStr.split("-")[0]);
+        return isNaN(year) ? null : year;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  });
+}
+
 
 // src/shared/extractors.js
 var import_crypto_js = __toESM(require("crypto-js"));
@@ -1083,7 +1102,24 @@ function isBlocked(title) {
 // src/pornwatch/extractor.js
 var import_cheerio_without_node_native = __toESM(require("cheerio-without-node-native"));
 var BASE_URL = "https://pornwatch.ws";
-function searchSite(query) {
+// Year matching helpers
+function extractYearFromTitle(title) {
+  const match = title.match(/\((\d{4})\)/) || title.match(/\b(19\d{2}|20\d{2})\b/);
+  return match ? parseInt(match[1]) : null;
+}
+function cleanTitle(title) {
+  return title.replace(/\(\d{4}\)/g, "").replace(/\b(19\d{2}|20\d{2})\b/g, "").replace(/[^a-zA-Z0-9\s]/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+}
+function titleSimilarity(a, b) {
+  const cleanA = cleanTitle(a), cleanB = cleanTitle(b);
+  if (cleanA === cleanB) return 1;
+  if (cleanA.includes(cleanB) || cleanB.includes(cleanA)) return 0.9;
+  const wordsA = new Set(cleanA.split(" ").filter((w) => w.length > 2)), wordsB = new Set(cleanB.split(" ").filter((w) => w.length > 2));
+  const intersection = [...wordsA].filter((w) => wordsB.has(w)), union = new Set([...wordsA, ...wordsB]);
+  return union.size === 0 ? 0 : intersection.length / union.size;
+}
+
+function searchSite(query, tmdbYear) {
   return __async(this, null, function* () {
     const url = `${BASE_URL}/?s=${encodeURIComponent(query)}`;
     const html = yield fetchText(url);
@@ -1093,7 +1129,9 @@ function searchSite(query) {
       const title = $(el).find("h2").text().trim() || $(el).find("h3").text().trim();
       const href = $(el).find("a").first().attr("href");
       if (title && href && !isBlocked(title)) {
-        results.push({ title, href });
+        const year = extractYearFromTitle(title);
+        const similarity = titleSimilarity(title, query);
+        results.push({ title, href, year, similarity });
       }
     });
     if (!results.length) {
@@ -1101,8 +1139,19 @@ function searchSite(query) {
         const title = $(el).find("h2, h3, .title").first().text().trim();
         const href = $(el).find("a").first().attr("href");
         if (title && href && href.startsWith("http") && !isBlocked(title)) {
-          results.push({ title, href });
+          const year = extractYearFromTitle(title);
+          const similarity = titleSimilarity(title, query);
+          results.push({ title, href, year, similarity });
         }
+      });
+    }
+    results.sort((a, b) => b.similarity - a.similarity);
+    if (tmdbYear) {
+      results.sort((a, b) => {
+        const aMatch = a.year === tmdbYear ? 1 : 0;
+        const bMatch = b.year === tmdbYear ? 1 : 0;
+        if (aMatch !== bMatch) return bMatch - aMatch;
+        return b.similarity - a.similarity;
       });
     }
     return results;
@@ -1154,12 +1203,17 @@ function getVideoLinks(pageUrl) {
 function extractStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     const title = yield getTitleFromTmdb(tmdbId, mediaType);
+    const tmdbYear = yield getYearFromTmdb(tmdbId, mediaType);
     const query = title || String(tmdbId);
-    const results = yield searchSite(query);
+    const results = yield searchSite(query, tmdbYear);
     if (!results.length)
       return [];
     const streams = [];
     for (const result of results.slice(0, 3)) {
+      if (tmdbYear && result.year && result.year !== tmdbYear && result.similarity < 0.8) {
+        console.log(`[PornWatch] Skipping "${result.title}" - year mismatch (${result.year} vs ${tmdbYear})`);
+        continue;
+      }
       const videoLinks = yield getVideoLinks(result.href);
       for (const link of videoLinks) {
         const extracted = yield extractFromUrl(link, BASE_URL + "/");
