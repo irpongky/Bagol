@@ -19,7 +19,6 @@ async function searchSite(query) {
         }
     });
 
-    // Fallback: broader search result selectors
     if (!results.length) {
         $('div.ml-item, article, div.item, div.post').each((_, el) => {
             const title = $(el).find('h2, h3, .title').first().text().trim();
@@ -38,13 +37,11 @@ async function getVideoLinks(pageUrl) {
     const $ = cheerio.load(html);
     const links = new Set();
 
-    // Primary: original selector (id="#iframe" is the data attribute pattern)
     $('div.Rtable1 a[id="#iframe"]').each((_, el) => {
         const href = $(el).attr('href');
         if (href && href.startsWith('http')) links.add(href);
     });
 
-    // Fallback selectors
     if (!links.size) {
         const selectors = [
             'div.Rtable1 a',
@@ -67,7 +64,6 @@ async function getVideoLinks(pageUrl) {
         }
     }
 
-    // Last resort: scan ALL links for known streaming hosts
     if (!links.size) {
         $('a[href]').each((_, el) => {
             const href = $(el).attr('href') || '';
@@ -80,10 +76,6 @@ async function getVideoLinks(pageUrl) {
     return [...links];
 }
 
-function normalize(text) {
-    return text.toLowerCase().replace(/[^a-z0-9]/g, '');
-}
-
 export async function extractStreams(tmdbId, mediaType, season, episode) {
     const metadata = await getMetadataFromTmdb(tmdbId, mediaType);
     if (!metadata) return [];
@@ -94,27 +86,16 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     if (!results.length) return [];
 
     const streams = [];
-    const normalizedTargetTitle = normalize(title);
 
-    for (const result of results) {
-        const normalizedResultTitle = normalize(result.title);
-        
-        // Basic title match check
-        if (!normalizedResultTitle.includes(normalizedTargetTitle) && !normalizedTargetTitle.includes(normalizedResultTitle)) {
-            continue;
-        }
-
-        // Year check: if year is present in result title, it must match TMDB year
+    for (const result of results.slice(0, 5)) {
         if (year) {
-            const yearMatch = result.title.match(/\b(19|20)\d{2}\b/);
-            if (yearMatch && yearMatch[0] !== year) {
-                console.log(`[XXXParodyHD] Year mismatch for ${result.title}: expected ${year}, found ${yearMatch[0]}`);
+            const yearInTitle = result.title.match(/\b(19|20)\d{2}\b/);
+            if (yearInTitle && yearInTitle[0] !== year) {
                 continue;
             }
         }
 
         const videoLinks = await getVideoLinks(result.href);
-
         for (const link of videoLinks) {
             const extracted = await extractFromUrl(link, BASE_URL + '/');
             if (extracted) {
@@ -124,7 +105,6 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
                 })));
             }
         }
-
         if (streams.length > 0) break;
     }
 

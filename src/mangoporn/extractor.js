@@ -12,7 +12,6 @@ async function searchSite(query) {
     const results = [];
 
     $('article').each((_, el) => {
-        // Search results use div.details a for title and div.image a for href (Kraptor ref)
         const title = $(el).find('div.details a').first().text().trim()
             || $(el).find('div h3').text().trim()
             || $(el).find('h2').text().trim();
@@ -25,7 +24,6 @@ async function searchSite(query) {
         }
     });
 
-    // Fallback: generic post/item selectors
     if (!results.length) {
         $('div.post, div.item, div.video-item, div.ml-item').each((_, el) => {
             const title = $(el).find('h2, h3, .title').first().text().trim();
@@ -44,13 +42,11 @@ async function getVideoLinks(pageUrl) {
     const $ = cheerio.load(html);
     const links = new Set();
 
-    // Primary selectors (original)
     $('div#pettabs > ul a').each((_, el) => {
         const href = $(el).attr('href');
         if (href && href.startsWith('http')) links.add(href);
     });
 
-    // Fallback selectors
     if (!links.size) {
         const selectors = [
             'div#pettabs a',
@@ -72,7 +68,6 @@ async function getVideoLinks(pageUrl) {
         }
     }
 
-    // Last resort: scan ALL links for known streaming hosts
     if (!links.size) {
         $('a[href]').each((_, el) => {
             const href = $(el).attr('href') || '';
@@ -85,10 +80,6 @@ async function getVideoLinks(pageUrl) {
     return [...links];
 }
 
-function normalize(text) {
-    return text.toLowerCase().replace(/[^a-z0-9]/g, '');
-}
-
 export async function extractStreams(tmdbId, mediaType, season, episode) {
     const metadata = await getMetadataFromTmdb(tmdbId, mediaType);
     if (!metadata) return [];
@@ -99,27 +90,17 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     if (!results.length) return [];
 
     const streams = [];
-    const normalizedTargetTitle = normalize(title);
 
-    for (const result of results) {
-        const normalizedResultTitle = normalize(result.title);
-        
-        // Basic title match check
-        if (!normalizedResultTitle.includes(normalizedTargetTitle) && !normalizedTargetTitle.includes(normalizedResultTitle)) {
-            continue;
-        }
-
-        // Year check: if year is present in result title, it must match TMDB year
+    for (const result of results.slice(0, 5)) {
+        // Soft year filter: only skip if year exists and is DIFFERENT
         if (year) {
-            const yearMatch = result.title.match(/\b(19|20)\d{2}\b/);
-            if (yearMatch && yearMatch[0] !== year) {
-                console.log(`[Mangoporn] Year mismatch for ${result.title}: expected ${year}, found ${yearMatch[0]}`);
-                continue;
+            const yearInTitle = result.title.match(/\b(19|20)\d{2}\b/);
+            if (yearInTitle && yearInTitle[0] !== year) {
+                continue; 
             }
         }
 
         const videoLinks = await getVideoLinks(result.href);
-
         for (const link of videoLinks) {
             const extracted = await extractFromUrl(link, result.href);
             if (extracted) {
@@ -129,7 +110,6 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
                 })));
             }
         }
-
         if (streams.length > 0) break;
     }
 

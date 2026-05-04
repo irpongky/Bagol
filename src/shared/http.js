@@ -21,6 +21,20 @@ export async function fetchJson(url, options = {}) {
 const TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 const TMDB_BASE_URL = "https://api.themoviedb.org/3";
 
+export async function getTitleFromTmdb(tmdbId, mediaType) {
+    try {
+        const endpoint = mediaType === "tv"
+            ? `${TMDB_BASE_URL}/tv/${tmdbId}`
+            : `${TMDB_BASE_URL}/movie/${tmdbId}`;
+        const res = await fetch(`${endpoint}?language=en-US&api_key=${TMDB_API_KEY}`);
+        if (!res.ok) return null;
+        const data = await res.json();
+        return data.title || data.name || null;
+    } catch {
+        return null;
+    }
+}
+
 export async function getMetadataFromTmdb(tmdbId, mediaType) {
     try {
         const endpoint = mediaType === "tv"

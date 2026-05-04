@@ -1154,9 +1154,6 @@ function getVideoLinks(pageUrl) {
     return [...links];
   });
 }
-function normalize(text) {
-  return text.toLowerCase().replace(/[^a-z0-9]/g, "");
-}
 function extractStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     const metadata = yield getMetadataFromTmdb(tmdbId, mediaType);
@@ -1168,16 +1165,10 @@ function extractStreams(tmdbId, mediaType, season, episode) {
     if (!results.length)
       return [];
     const streams = [];
-    const normalizedTargetTitle = normalize(title);
-    for (const result of results) {
-      const normalizedResultTitle = normalize(result.title);
-      if (!normalizedResultTitle.includes(normalizedTargetTitle) && !normalizedTargetTitle.includes(normalizedResultTitle)) {
-        continue;
-      }
+    for (const result of results.slice(0, 5)) {
       if (year) {
-        const yearMatch = result.title.match(/\b(19|20)\d{2}\b/);
-        if (yearMatch && yearMatch[0] !== year) {
-          console.log(`[PornWatch] Year mismatch for ${result.title}: expected ${year}, found ${yearMatch[0]}`);
+        const yearInTitle = result.title.match(/\b(19|20)\d{2}\b/);
+        if (yearInTitle && yearInTitle[0] !== year) {
           continue;
         }
       }
