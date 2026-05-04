@@ -34,20 +34,3 @@ export async function getTitleFromTmdb(tmdbId, mediaType) {
         return null;
     }
 }
-
-export async function getMetadataFromTmdb(tmdbId, mediaType) {
-    try {
-        const endpoint = mediaType === "tv"
-            ? `${TMDB_BASE_URL}/tv/${tmdbId}`
-            : `${TMDB_BASE_URL}/movie/${tmdbId}`;
-        const res = await fetch(`${endpoint}?language=en-US&api_key=${TMDB_API_KEY}`);
-        if (!res.ok) return null;
-        const data = await res.json();
-        const title = data.title || data.name || null;
-        const releaseDate = data.release_date || data.first_air_date || null;
-        const year = releaseDate ? releaseDate.split("-")[0] : null;
-        return { title, year };
-    } catch {
-        return null;
-    }
-}

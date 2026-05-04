@@ -1,4 +1,4 @@
-import { fetchText, getMetadataFromTmdb } from '../shared/http.js';
+import { fetchText, getTitleFromTmdb } from '../shared/http.js';
 import { extractFromUrl, isKnownEmbedHost } from '../shared/extractors.js';
 import { isBlocked } from '../shared/filters.js';
 import cheerio from 'cheerio-without-node-native';
@@ -12,6 +12,7 @@ async function searchSite(query) {
     const results = [];
 
     $('article').each((_, el) => {
+        // Search results use div.details a for title and div.image a for href (Kraptor ref)
         const title = $(el).find('div.details a').first().text().trim()
             || $(el).find('div h3').text().trim()
             || $(el).find('h2').text().trim();
@@ -24,6 +25,7 @@ async function searchSite(query) {
         }
     });
 
+    // Fallback: generic post/item selectors
     if (!results.length) {
         $('div.post, div.item, div.video-item, div.ml-item').each((_, el) => {
             const title = $(el).find('h2, h3, .title').first().text().trim();
@@ -42,11 +44,13 @@ async function getVideoLinks(pageUrl) {
     const $ = cheerio.load(html);
     const links = new Set();
 
+    // Primary selectors (original)
     $('div#pettabs > ul a').each((_, el) => {
         const href = $(el).attr('href');
         if (href && href.startsWith('http')) links.add(href);
     });
 
+    // Fallback selectors
     if (!links.size) {
         const selectors = [
             'div#pettabs a',
@@ -68,6 +72,7 @@ async function getVideoLinks(pageUrl) {
         }
     }
 
+    // Last resort: scan ALL links for known streaming hosts
     if (!links.size) {
         $('a[href]').each((_, el) => {
             const href = $(el).attr('href') || '';
@@ -81,9 +86,7 @@ async function getVideoLinks(pageUrl) {
 }
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {
-    const metadata = await getMetadataFromTmdb(tmdbId, mediaType);
-    if (!metadata) return [];
-    const { title, year } = metadata;
+    const title = await getTitleFromTmdb(tmdbId, mediaType);
     const query = title || String(tmdbId);
 
     const results = await searchSite(query);
@@ -91,16 +94,9 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
 
     const streams = [];
 
-    for (const result of results.slice(0, 5)) {
-        // Soft year filter: only skip if year exists and is DIFFERENT
-        if (year) {
-            const yearInTitle = result.title.match(/\b(19|20)\d{2}\b/);
-            if (yearInTitle && yearInTitle[0] !== year) {
-                continue; 
-            }
-        }
-
+    for (const result of results.slice(0, 3)) {
         const videoLinks = await getVideoLinks(result.href);
+
         for (const link of videoLinks) {
             const extracted = await extractFromUrl(link, result.href);
             if (extracted) {
@@ -110,6 +106,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
                 })));
             }
         }
+
         if (streams.length > 0) break;
     }
 
