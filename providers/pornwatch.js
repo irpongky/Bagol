@@ -1,129 +1,89 @@
-const cheerio = require('cheerio');
+/**
+ * PROVIDER: PORNWATCH.WS
+ * FIX: AJAX Handshake + No-Node-Modules (Nuvio Safe)
+ */
 
-const PornWatch = {
-  baseUrl: "https://pornwatch.ws",
+const BASE_URL = "https://pornwatch.ws";
 
-  /**
-   * EXTRACTOR: Bongkar Link Mentah Jadi Direct Stream
-   * Biar Nuvio lo nggak cuma dapet 404/Loading.
-   */
-  async resolveStream(embedUrl, referer) {
+async function getStreams(tmdbId, mediaType, season, episode) {
     try {
-      // 1. VOE.SX Extractor (Bypass Base64)
-      if (embedUrl.includes('voe.sx')) {
-        const html = await fetchText(embedUrl, { "Referer": referer });
-        const base64Data = html.match(/atob\(['"]([^'"]+)['"]\)/)?.[1];
-        if (base64Data) {
-          const decoded = JSON.parse(Buffer.from(base64Data, 'base64').toString());
-          const streamUrl = decoded.file || decoded.url;
-          return {
-            url: streamUrl,
-            headers: { "Referer": "https://voe.sx/", "User-Agent": "Mozilla/5.0" },
-            isM3U8: streamUrl.includes('.m3u8')
-          };
-        }
-      }
+        // 1. Ambil Judul & Year pake helper global Nuvio
+        const title = await getTitleFromTmdb(tmdbId, mediaType);
+        const year = await getYearFromTmdb(tmdbId, mediaType);
+        
+        // 2. Search ke situs
+        const searchUrl = `${BASE_URL}/?s=${encodeURIComponent(title)}`;
+        const searchHtml = await fetchText(searchUrl);
+        const $search = cheerio.load(searchHtml);
+        
+        const movieHref = $search(".result-item .title a").first().attr("href");
+        if (!movieHref) return [];
 
-      // 2. PLAY4ME Family (Handshake API) - Termasuk upns.online, rpmplay, dll.
-      if (embedUrl.includes('#') && (embedUrl.includes('player4me') || embedUrl.includes('upns.online') || embedUrl.includes('rpmplay') || embedUrl.includes('embedseek'))) {
-        const id = embedUrl.split('#')[1];
-        const domain = new URL(embedUrl).hostname;
-        const apiUrl = `https://${domain}/api/v1/video?id=${id}`;
+        // 3. Masuk ke halaman film buat ambil Post ID (Ini yang lo lewatkan kemarin)
+        const pageHtml = await fetchText(movieHref);
+        const $page = cheerio.load(pageHtml);
+        const postId = $page("#player").attr("data-post");
+        if (!postId) return [];
 
-        const res = await fetch(apiUrl, {
-          method: 'POST',
-          headers: { "Referer": referer, "X-Requested-With": "XMLHttpRequest" }
-        });
-        const data = await res.json();
-        if (data && data.url) {
-          return {
-            url: data.url,
-            headers: { "Referer": `https://${domain}/` },
-            isM3U8: data.url.includes('.m3u8')
-          };
-        }
-      }
+        const streams = [];
+        const options = [];
 
-      // 3. DOODSTREAM (Return as Embed for Player)
-      if (embedUrl.includes('dood') || embedUrl.includes('doply')) {
-        return { url: embedUrl, headers: { "Referer": referer }, isEmbed: true };
-      }
-
-      return null;
-    } catch (e) {
-      return null;
-    }
-  },
-
-  /**
-   * PROVIDER CORE: Ambil Semua Server via AJAX
-   */
-  async getStreams(tmdbId, mediaType) {
-    try {
-      // Step 1: Cari judul di TMDB dan Search di situs
-      const title = await getTitleFromTmdb(tmdbId, mediaType);
-      const searchUrl = `${this.baseUrl}/?s=${encodeURIComponent(title)}`;
-      const searchHtml = await fetchText(searchUrl);
-      const $search = cheerio.load(searchHtml);
-      
-      const movieHref = $search(".result-item .title a").first().attr("href");
-      if (!movieHref) return [];
-
-      // Step 2: Masuk ke halaman film & ambil Post ID
-      const pageHtml = await fetchText(movieHref);
-      const $page = cheerio.load(pageHtml);
-      const postId = $page("#player").attr("data-post");
-      if (!postId) return [];
-
-      const streams = [];
-      const ajaxRequests = [];
-
-      // Step 3: Identifikasi semua opsi server (DooPlay Options)
-      $page(".dooplay_player_option").each((_, el) => {
-        const nume = $(el).attr("data-nume");
-        const type = $(el).attr("data-type");
-        const label = $(el).find(".server").text().trim() || `Server ${nume}`;
-
-        // Logic AJAX: Tembak endpoint /wp-admin/admin-ajax.php
-        ajaxRequests.push((async () => {
-          try {
-            const res = await fetch(`${this.baseUrl}/wp-admin/admin-ajax.php`, {
-              method: "POST",
-              headers: { "Content-Type": "application/x-www-form-urlencoded", "Referer": movieHref },
-              body: new URLSearchParams({ action: "doo_player_ajax", post: postId, nume, type })
+        // 4. Cari semua opsi server di list
+        $page(".dooplay_player_option").each((_, el) => {
+            options.push({
+                nume: $page(el).attr("data-nume"),
+                type: $page(el).attr("data-type"),
+                post: $page(el).attr("data-post") || postId,
+                label: $page(el).find(".server").text().trim() || "Server"
             });
-            const data = await res.json();
+        });
 
-            if (data && data.embed_url) {
-              // Extract URL dari iframe string jika perlu
-              const embedUrl = data.embed_url.match(/src="([^"]+)"/)?.[1] || data.embed_url;
-              const cleanEmbedUrl = embedUrl.startsWith('//') ? `https:${embedUrl}` : embedUrl;
-
-              // Step 4: RESOLVE link mentah jadi link siap putar
-              const resolved = await this.resolveStream(cleanEmbedUrl, movieHref);
-              if (resolved) {
-                streams.push({
-                  title: `[PornWatch] ${label}`,
-                  url: resolved.url,
-                  headers: resolved.headers,
-                  isM3U8: resolved.isM3U8,
-                  isEmbed: resolved.isEmbed,
-                  quality: "Auto"
+        // 5. Handshake AJAX: Ambil link asli dari database mereka
+        for (const opt of options) {
+            try {
+                // Pake string body biasa biar gak butuh URLSearchParams
+                const body = `action=doo_player_ajax&post=${opt.post}&nume=${opt.nume}&type=${opt.type}`;
+                
+                const res = await fetch(`${BASE_URL}/wp-admin/admin-ajax.php`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "X-Requested-With": "XMLHttpRequest",
+                        "Referer": movieHref
+                    },
+                    body: body
                 });
-              }
-            }
-          } catch (err) { /* silent fail for single server */ }
-        })());
-      });
 
-      await Promise.all(ajaxRequests);
-      return streams;
+                const data = await res.json();
+
+                if (data && data.embed_url) {
+                    // Bersihin tag <iframe> kalau ada
+                    let embedUrl = data.embed_url;
+                    if (embedUrl.includes('src="')) {
+                        const match = embedUrl.match(/src="([^"]+)"/);
+                        if (match) embedUrl = match[1];
+                    }
+                    
+                    const finalUrl = embedUrl.startsWith('//') ? `https:${embedUrl}` : embedUrl;
+
+                    // 6. SERAHKAN KE EXTRACTOR GLOBAL (Biar Nuvio yang jamin Playable)
+                    const extracted = await extractFromUrl(finalUrl, movieHref);
+                    if (extracted && extracted.length > 0) {
+                        streams.push(...extracted.map(s => ({
+                            ...s,
+                            title: `[PornWatch] ${opt.label} - ${s.title || ''}`
+                        })));
+                    }
+                }
+            } catch (srvErr) { /* Skip server yang error */ }
+        }
+
+        return streams;
 
     } catch (error) {
-      console.error("[PornWatch] Final Error:", error);
-      return [];
+        console.error("[PornWatch] Fatal Error:", error);
+        return [];
     }
-  }
-};
+}
 
-module.exports = PornWatch;
+module.exports = { getStreams };
