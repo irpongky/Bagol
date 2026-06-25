@@ -306,7 +306,8 @@ export async function extractPlayer4Me(url) {
                 'User-Agent': UA,
                 'Accept': '*/*',
                 'Cookie': 'popunderCount/=1',
-                'Referer': mainUrl + '/'
+                'Referer': mainUrl + '/',
+                'Origin': mainUrl
             }
         })).trim();
 
