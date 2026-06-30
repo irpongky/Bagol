@@ -10,6 +10,7 @@ async function searchSite(query) {
     const html = await fetchText(url);
     const $ = cheerio.load(html);
     const results = [];
+    const seen = new Set(); // [FIX BUG-18] Prevent duplicate URLs
 
     $('article').each((_, el) => {
         // Search results use div.details a for title and div.image a for href (Kraptor ref)
@@ -20,7 +21,8 @@ async function searchSite(query) {
             || $(el).find('div.details a').attr('href')
             || $(el).find('h3 a').attr('href')
             || $(el).find('a').first().attr('href');
-        if (title && href && !isBlocked(title)) {
+        if (title && href && !isBlocked(title) && !seen.has(href)) {
+            seen.add(href);
             results.push({ title, href });
         }
     });
@@ -30,7 +32,8 @@ async function searchSite(query) {
         $('div.post, div.item, div.video-item, div.ml-item').each((_, el) => {
             const title = $(el).find('h2, h3, .title').first().text().trim();
             const href = $(el).find('a').first().attr('href');
-            if (title && href && href.startsWith('http') && !isBlocked(title)) {
+            if (title && href && href.startsWith('http') && !isBlocked(title) && !seen.has(href)) {
+                seen.add(href);
                 results.push({ title, href });
             }
         });
@@ -86,6 +89,21 @@ async function getVideoLinks(pageUrl) {
 }
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {
+    if (String(tmdbId).startsWith('http')) {
+        const videoLinks = await getVideoLinks(tmdbId);
+        const streams = [];
+        for (const link of videoLinks) {
+            const extracted = await extractFromUrl(link, tmdbId);
+            if (extracted) {
+                streams.push(...extracted.map(s => ({
+                    ...s,
+                    title: `[Mangoporn] ${s.title}`
+                })));
+            }
+        }
+        return streams;
+    }
+
     const title = await getTitleFromTmdb(tmdbId, mediaType);
     const query = title || String(tmdbId);
 

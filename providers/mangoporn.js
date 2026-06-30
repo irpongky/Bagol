@@ -21,6 +21,18 @@ var __spreadValues = (a, b) => {
   return a;
 };
 var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
+var __objRest = (source, exclude) => {
+  var target = {};
+  for (var prop in source)
+    if (__hasOwnProp.call(source, prop) && exclude.indexOf(prop) < 0)
+      target[prop] = source[prop];
+  if (source != null && __getOwnPropSymbols)
+    for (var prop of __getOwnPropSymbols(source)) {
+      if (exclude.indexOf(prop) < 0 && __propIsEnum.call(source, prop))
+        target[prop] = source[prop];
+    }
+  return target;
+};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -63,14 +75,24 @@ var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Fir
 var HEADERS = {
   "User-Agent": UA
 };
+var DEFAULT_TIMEOUT_MS = 6e3;
 function fetchText(_0) {
   return __async(this, arguments, function* (url, options = {}) {
-    const response = yield fetch(url, __spreadValues({
-      headers: __spreadValues(__spreadValues({}, HEADERS), options.headers)
-    }, options));
-    if (!response.ok)
-      throw new Error(`HTTP ${response.status} for ${url}`);
-    return response.text();
+    const controller = new AbortController();
+    const _a = options, { timeout, signal: _ignored, headers: optHeaders } = _a, restOpts = __objRest(_a, ["timeout", "signal", "headers"]);
+    const timer = setTimeout(() => controller.abort(), timeout || DEFAULT_TIMEOUT_MS);
+    try {
+      const response = yield fetch(url, __spreadProps(__spreadValues({}, restOpts), {
+        headers: __spreadValues(__spreadValues({}, HEADERS), optHeaders),
+        signal: controller.signal
+        // Always use our controller — never allow override
+      }));
+      if (!response.ok)
+        throw new Error(`HTTP ${response.status} for ${url}`);
+      return response.text();
+    } finally {
+      clearTimeout(timer);
+    }
   });
 }
 function fetchJson(_0) {
@@ -85,11 +107,17 @@ function getTitleFromTmdb(tmdbId, mediaType) {
   return __async(this, null, function* () {
     try {
       const endpoint = mediaType === "tv" ? `${TMDB_BASE_URL}/tv/${tmdbId}` : `${TMDB_BASE_URL}/movie/${tmdbId}`;
-      const res = yield fetch(`${endpoint}?language=en-US&api_key=${TMDB_API_KEY}`);
-      if (!res.ok)
-        return null;
-      const data = yield res.json();
-      return data.title || data.name || null;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5e3);
+      try {
+        const res = yield fetch(`${endpoint}?language=en-US&api_key=${TMDB_API_KEY}`, { signal: controller.signal });
+        if (!res.ok)
+          return null;
+        const data = yield res.json();
+        return data.title || data.name || null;
+      } finally {
+        clearTimeout(timer);
+      }
     } catch (e) {
       return null;
     }
@@ -1090,10 +1118,12 @@ function searchSite(query) {
     const html = yield fetchText(url);
     const $ = import_cheerio_without_node_native.default.load(html);
     const results = [];
+    const seen = /* @__PURE__ */ new Set();
     $("article").each((_, el) => {
       const title = $(el).find("div.details a").first().text().trim() || $(el).find("div h3").text().trim() || $(el).find("h2").text().trim();
       const href = $(el).find("div.image a").attr("href") || $(el).find("div.details a").attr("href") || $(el).find("h3 a").attr("href") || $(el).find("a").first().attr("href");
-      if (title && href && !isBlocked(title)) {
+      if (title && href && !isBlocked(title) && !seen.has(href)) {
+        seen.add(href);
         results.push({ title, href });
       }
     });
@@ -1101,7 +1131,8 @@ function searchSite(query) {
       $("div.post, div.item, div.video-item, div.ml-item").each((_, el) => {
         const title = $(el).find("h2, h3, .title").first().text().trim();
         const href = $(el).find("a").first().attr("href");
-        if (title && href && href.startsWith("http") && !isBlocked(title)) {
+        if (title && href && href.startsWith("http") && !isBlocked(title) && !seen.has(href)) {
+          seen.add(href);
           results.push({ title, href });
         }
       });
@@ -1154,6 +1185,19 @@ function getVideoLinks(pageUrl) {
 }
 function extractStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
+    if (String(tmdbId).startsWith("http")) {
+      const videoLinks = yield getVideoLinks(tmdbId);
+      const streams2 = [];
+      for (const link of videoLinks) {
+        const extracted = yield extractFromUrl(link, tmdbId);
+        if (extracted) {
+          streams2.push(...extracted.map((s) => __spreadProps(__spreadValues({}, s), {
+            title: `[Mangoporn] ${s.title}`
+          })));
+        }
+      }
+      return streams2;
+    }
     const title = yield getTitleFromTmdb(tmdbId, mediaType);
     const query = title || String(tmdbId);
     const results = yield searchSite(query);
