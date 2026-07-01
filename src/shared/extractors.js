@@ -934,82 +934,147 @@ const VOE_HOSTS = [
     'volescalen.com', 'voecarriage.com', 'voefence.com', 'voeshine.com',
 ];
 
+const VOE_UNPROTECTED_MIRRORS = [
+    'garylargeavailable.com',
+    'bryantenunder.com',
+];
+
+function rot13(str) {
+    let out = '';
+    for (let i = 0; i < str.length; i++) {
+        let c = str.charCodeAt(i);
+        if (c >= 65 && c <= 90) c = (c - 65 + 13) % 26 + 65;
+        else if (c >= 97 && c <= 122) c = (c - 97 + 13) % 26 + 97;
+        out += String.fromCharCode(c);
+    }
+    return out;
+}
+
+function decodeVoe(encodedStr) {
+    try {
+        let rot = rot13(encodedStr);
+        const separators = ['@\\$', '\\^\\^', '~@', '%\\?', '\\*~', '!!', '#&'];
+        separators.forEach(sep => {
+            rot = rot.replace(new RegExp(sep, 'g'), '');
+        });
+        
+        let b64 = atob(rot);
+        let shifted = '';
+        for(let i = 0; i < b64.length; i++) {
+            shifted += String.fromCharCode(b64.charCodeAt(i) - 3);
+        }
+        
+        let reversed = shifted.split('').reverse().join('');
+        let finalJson = decodeURIComponent(escape(atob(reversed)));
+        return JSON.parse(finalJson);
+    } catch (e) { return null; }
+}
+
 export function isVoe(url) {
     return VOE_HOSTS.some(h => url.includes(h));
 }
 
 export async function extractVoe(url) {
-    try {
-        const origin = new URL(url).origin;
-        const html = await fetchText(url, {
-            headers: {
-                'User-Agent': UA,
-                'Referer': origin + '/',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    const mediaId = (url.match(/\/e\/([a-zA-Z0-9]+)/) || [])[1];
+    if (!mediaId) return null;
+
+    const candidates = [url, ...VOE_UNPROTECTED_MIRRORS.map(h => `https://${h}/e/${mediaId}`)];
+
+    for (const candidateUrl of candidates) {
+        try {
+            const origin = new URL(candidateUrl).origin;
+            const html = await fetchText(candidateUrl, {
+                headers: {
+                    'User-Agent': UA,
+                    'Referer': candidateUrl,
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                }
+            });
+
+            if (html.includes('ddos-guard') || html.includes('DDoS-Guard')) {
+                continue;
             }
-        });
 
-        // hls: "..." pattern (Voe uses this in their player config)
-        const hlsMatch = html.match(/['"]hls['"]\s*:\s*['"]([^'"]+)['"]/);
-        if (hlsMatch) {
-            return [{
-                name: 'VOE',
-                title: 'VOE',
-                url: hlsMatch[1],
-                quality: 'auto',
-                headers: { 'Referer': origin + '/', 'User-Agent': UA }
-            }];
-        }
+            // Check if page contains a JS redirect (bryantenunder.com pattern)
+            const jsRedirectMatch = html.match(/window\.location\.href\s*=\s*['"]([^'"]+)['"]/) ||
+                                    html.match(/location\.href\s*=\s*['"]([^'"]+)['"]/);
+            if (jsRedirectMatch) {
+                const nextUrl = jsRedirectMatch[1];
+                const nextOrigin = new URL(nextUrl).origin;
+                const nextHtml = await fetchText(nextUrl, {
+                    headers: {
+                        'User-Agent': UA,
+                        'Referer': candidateUrl,
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    }
+                });
+                if (nextHtml.includes('ddos-guard') || nextHtml.includes('DDoS-Guard')) continue;
+                
+                // Try to extract from redirect target
+                const jsonMatch = nextHtml.match(/<script type="application\/json">\["([^"]+)"\]<\/script>/);
+                if (jsonMatch) {
+                    const decoded = decodeVoe(jsonMatch[1]);
+                    if (decoded && decoded.source) {
+                        return [{
+                            name: 'VOE',
+                            title: 'VOE',
+                            url: decoded.source,
+                            quality: decoded.quality || 'auto',
+                            headers: { 'Referer': nextOrigin + '/', 'User-Agent': UA }
+                        }];
+                    }
+                }
+            }
 
-        // sources:[{file:"..."}]
-        const sourcesMatch = html.match(/sources\s*:\s*\[\s*\{[^}]*?file\s*:\s*["']([^"']+)["']/);
-        if (sourcesMatch) {
-            return [{
-                name: 'VOE',
-                title: 'VOE',
-                url: sourcesMatch[1],
-                quality: 'auto',
-                headers: { 'Referer': origin + '/', 'User-Agent': UA }
-            }];
-        }
-
-        // p,a,c,k packed script
-        const packedBlock = html.match(/\}\s*\('([^']+)',(\d+),(\d+),'([^']+)'\.split\('\|'\)/)?.[0];
-        if (packedBlock) {
-            const decoded = unpackJS(packedBlock);
-            if (decoded) {
-                const hlsInPacked = decoded.match(/['"]hls['"]\s*:\s*['"]([^'"]+\.m3u8[^'"]*)['"]/);
-                const fileInPacked = decoded.match(/file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/);
-                const m3u8InPacked = decoded.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/);
-                const videoUrl = hlsInPacked?.[1] || fileInPacked?.[1] || m3u8InPacked?.[1];
-                if (videoUrl) {
+            // Try encoded JSON block
+            const jsonMatch = html.match(/<script type="application\/json">\["([^"]+)"\]<\/script>/);
+            if (jsonMatch) {
+                const decoded = decodeVoe(jsonMatch[1]);
+                if (decoded && decoded.source) {
                     return [{
                         name: 'VOE',
                         title: 'VOE',
-                        url: videoUrl,
-                        quality: 'auto',
+                        url: decoded.source,
+                        quality: decoded.quality || 'auto',
                         headers: { 'Referer': origin + '/', 'User-Agent': UA }
                     }];
                 }
             }
-        }
 
-        // bare m3u8
-        const m3u8Match = html.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/);
-        if (m3u8Match) {
-            return [{
-                name: 'VOE',
-                title: 'VOE',
-                url: m3u8Match[1],
-                quality: 'auto',
-                headers: { 'Referer': origin + '/', 'User-Agent': UA }
-            }];
-        }
+            // Fallback: search for m3u8 in plain HTML
+            const hlsMatch = html.match(/['"]hls['"]\s*:\s*['"]([^'"]+)['"]/);
+            if (hlsMatch) {
+                return [{
+                    name: 'VOE',
+                    title: 'VOE',
+                    url: hlsMatch[1],
+                    quality: 'auto',
+                    headers: { 'Referer': origin + '/', 'User-Agent': UA }
+                }];
+            }
 
-        return null;
-    } catch {
-        return null;
+            // Fallback: eval() packed JS
+            const packed = html.match(/eval\(function\(p,a,c,k,e,[rd]\).*?\}\(.*\)\)/s);
+            if (packed) {
+                const unpacked = unpackJS(packed[0]);
+                if (unpacked) {
+                    const m3u8InPacked = unpacked.match(/['"]hls['"]\s*:\s*['"]([^'"]+\.m3u8[^'"]*)['"]/) ||
+                                         unpacked.match(/file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/) ||
+                                         unpacked.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/);
+                    if (m3u8InPacked) {
+                        return [{
+                            name: 'VOE',
+                            title: 'VOE',
+                            url: m3u8InPacked[1],
+                            quality: 'auto',
+                            headers: { 'Referer': origin + '/', 'User-Agent': UA }
+                        }];
+                    }
+                }
+            }
+        } catch (e) {}
     }
+    return null;
 }
 
 // ─────────────────────────────────────────────
