@@ -33,6 +33,13 @@ var __objRest = (source, exclude) => {
     }
   return target;
 };
+var __commonJS = (cb, mod) => function __require() {
+  try {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  } catch (e) {
+    throw mod = 0, e;
+  }
+};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -71,107 +78,124 @@ var __async = (__this, __arguments, generator) => {
 };
 
 // src/shared/http.js
-var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0";
-var HEADERS = {
-  "User-Agent": UA
-};
-var DEFAULT_TIMEOUT_MS = 6e3;
-function fetchText(_0) {
-  return __async(this, arguments, function* (url, options = {}) {
-    const controller = new AbortController();
-    const _a = options, { timeout, signal: _ignored, headers: optHeaders } = _a, restOpts = __objRest(_a, ["timeout", "signal", "headers"]);
-    const timer = setTimeout(() => controller.abort(), timeout || DEFAULT_TIMEOUT_MS);
-    try {
-      const response = yield fetch(url, __spreadProps(__spreadValues({}, restOpts), {
-        headers: __spreadValues(__spreadValues({}, HEADERS), optHeaders),
-        signal: controller.signal
-        // Always use our controller — never allow override
-      }));
-      if (!response.ok)
-        throw new Error(`HTTP ${response.status} for ${url}`);
-      return response.text();
-    } finally {
-      clearTimeout(timer);
-    }
-  });
-}
-function fetchJson(_0) {
-  return __async(this, arguments, function* (url, options = {}) {
-    const raw = yield fetchText(url, options);
-    return JSON.parse(raw);
-  });
-}
-var TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
-var TMDB_BASE_URL = "https://api.themoviedb.org/3";
-function getTitleFromTmdb(tmdbId, mediaType) {
-  return __async(this, null, function* () {
-    if (!tmdbId)
-      return null;
-    try {
-      const type = mediaType === "tv" ? "tv" : "movie";
-      const url = `${TMDB_BASE_URL}/${type}/${tmdbId}?language=en-US&api_key=${TMDB_API_KEY}`;
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 5e3);
-      try {
-        const res = yield fetch(url, { signal: controller.signal });
-        if (!res.ok)
-          return null;
-        const data = yield res.json();
-        return data.title || data.name || null;
-      } finally {
-        clearTimeout(timer);
-      }
-    } catch (e) {
-      return null;
-    }
-  });
-}
-function resolveMetadata(id, mediaType) {
-  return __async(this, null, function* () {
-    var _a, _b;
-    if (!id)
-      return { title: null, id: null };
-    const idStr = String(id);
-    if (idStr.startsWith("tt")) {
-      try {
-        const url = `${TMDB_BASE_URL}/find/${idStr}?external_source=imdb_id&api_key=${TMDB_API_KEY}`;
+var require_http = __commonJS({
+  "src/shared/http.js"(exports2, module2) {
+    var UA2 = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0";
+    var HEADERS = { "User-Agent": UA2 };
+    var DEFAULT_TIMEOUT_MS = 1e4;
+    var TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
+    var TMDB_BASE_URL = "https://api.themoviedb.org/3";
+    function fetchWithRetry(_0) {
+      return __async(this, arguments, function* (url, options = {}, retries = 3) {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 5e3);
+        const _a = options, { timeout, signal: _ignored, headers: optHeaders } = _a, restOpts = __objRest(_a, ["timeout", "signal", "headers"]);
+        const timer = setTimeout(() => controller.abort(), timeout || DEFAULT_TIMEOUT_MS);
         try {
-          const res = yield fetch(url, { signal: controller.signal });
-          if (!res.ok)
-            return { title: null, id: idStr };
-          const data = yield res.json();
-          const movie = (_a = data.movie_results) == null ? void 0 : _a[0];
-          const tv = (_b = data.tv_results) == null ? void 0 : _b[0];
-          if (movie)
-            return { title: movie.title, id: movie.id, type: "movie" };
-          if (tv)
-            return { title: tv.name, id: tv.id, type: "tv" };
-          return { title: null, id: idStr };
+          const response = yield fetch(url, __spreadProps(__spreadValues({}, restOpts), {
+            headers: __spreadValues(__spreadValues({}, HEADERS), optHeaders),
+            signal: controller.signal
+          }));
+          if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
+          return response;
+        } catch (e) {
+          if (retries > 0 && (e.name === "AbortError" || e.message.includes("HTTP 429"))) {
+            yield new Promise((r) => setTimeout(r, 1e3 * (4 - retries)));
+            return fetchWithRetry(url, options, retries - 1);
+          }
+          throw e;
         } finally {
           clearTimeout(timer);
         }
-      } catch (e) {
-        return { title: null, id: idStr };
-      }
+      });
     }
-    if (idStr.startsWith("tmdb:")) {
-      const parts = idStr.split(":");
-      let tmdbId = parts[parts.length - 1];
-      let type = mediaType;
-      if (parts.length === 3) {
-        type = parts[1];
-      }
-      const title2 = yield getTitleFromTmdb(tmdbId, type);
-      return { title: title2, id: tmdbId, type };
+    function fetchText3(_0) {
+      return __async(this, arguments, function* (url, options = {}) {
+        const response = yield fetchWithRetry(url, options);
+        return response.text();
+      });
     }
-    const title = yield getTitleFromTmdb(idStr, mediaType);
-    return { title, id: idStr, type: mediaType };
-  });
-}
+    function fetchJson2(_0) {
+      return __async(this, arguments, function* (url, options = {}) {
+        const raw = yield fetchText3(url, options);
+        return JSON.parse(raw);
+      });
+    }
+    function getTitleFromTmdb(tmdbId, mediaType) {
+      return __async(this, null, function* () {
+        if (!tmdbId) return null;
+        const types = mediaType === "tv" ? ["tv", "movie"] : ["movie", "tv"];
+        for (const type of types) {
+          try {
+            const url = `${TMDB_BASE_URL}/${type}/${tmdbId}?language=en-US&api_key=${TMDB_API_KEY}&include_adult=true`;
+            const res = yield fetchWithRetry(url, { timeout: 8e3 }, 2);
+            const data = yield res.json();
+            const title = data.title || data.name || null;
+            if (title) return { title, type, data };
+          } catch (e) {
+          }
+        }
+        return null;
+      });
+    }
+    function resolveMetadata2(id, mediaType) {
+      return __async(this, null, function* () {
+        if (!id) return { title: null, id: null };
+        const idStr = String(id);
+        if (idStr.startsWith("tt")) {
+          try {
+            const url = `${TMDB_BASE_URL}/find/${idStr}?external_source=imdb_id&api_key=${TMDB_API_KEY}&include_adult=true`;
+            const res = yield fetchWithRetry(url, { timeout: 8e3 }, 2);
+            const data = yield res.json();
+            const movieResults = data.movie_results || [];
+            const tvResults = data.tv_results || [];
+            if (mediaType === "tv" && tvResults.length > 0) {
+              const tv = tvResults[0];
+              return { title: tv.name, id: tv.id, type: "tv" };
+            }
+            if (movieResults.length > 0) {
+              const movie = movieResults[0];
+              return { title: movie.title, id: movie.id, type: "movie" };
+            }
+            if (tvResults.length > 0) {
+              const tv = tvResults[0];
+              return { title: tv.name, id: tv.id, type: "tv" };
+            }
+            return { title: idStr, id: idStr, type: mediaType || "movie" };
+          } catch (e) {
+            return { title: idStr, id: idStr, type: mediaType || "movie" };
+          }
+        }
+        if (idStr.startsWith("tmdb:")) {
+          const parts = idStr.split(":");
+          let tmdbId = parts[parts.length - 1];
+          let type = mediaType;
+          if (parts.length >= 3) {
+            type = parts[1];
+          }
+          const result2 = yield getTitleFromTmdb(tmdbId, type);
+          if (result2) {
+            return { title: result2.title, id: tmdbId, type: result2.type };
+          }
+          return { title: null, id: tmdbId, type: type || "movie" };
+        }
+        const result = yield getTitleFromTmdb(idStr, mediaType);
+        if (result) {
+          return { title: result.title, id: idStr, type: result.type };
+        }
+        return { title: null, id: idStr, type: mediaType || "movie" };
+      });
+    }
+    if (typeof module2 !== "undefined" && module2.exports) {
+      module2.exports = { fetchText: fetchText3, fetchJson: fetchJson2, getTitleFromTmdb, resolveMetadata: resolveMetadata2, TMDB_API_KEY, TMDB_BASE_URL };
+    }
+  }
+});
+
+// src/pornwatch/extractor.js
+var import_http2 = __toESM(require_http());
 
 // src/shared/extractors.js
+var import_http = __toESM(require_http());
 var import_crypto_js = __toESM(require("crypto-js"));
 function aesCbcDecrypt(cipherHexOrB64, keyStr, ivStr) {
   const normalized = cipherHexOrB64.replace(/-/g, "+").replace(/_/g, "/");
@@ -217,21 +241,20 @@ function extractDoodStream(url) {
     try {
       const embedUrl = url.replace("d000d.com", "doodstream.com");
       const embedOrigin = new URL(embedUrl).origin;
-      const html = yield fetchText(embedUrl, {
+      const html = yield (0, import_http.fetchText)(embedUrl, {
         headers: {
-          "User-Agent": UA,
+          "User-Agent": import_http.UA,
           "Referer": embedOrigin + "/",
           "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
           "Accept-Language": "en-US,en;q=0.5"
         }
       });
       const md5Match = html.match(/\/pass_md5\/([^/]*)\/([^/']*)/);
-      if (!md5Match)
-        return null;
+      if (!md5Match) return null;
       const [fullPath, expiry, token] = md5Match;
       const md5Url = embedOrigin + fullPath;
-      const baseLink = (yield fetchText(md5Url, {
-        headers: { "User-Agent": UA, "Referer": embedUrl }
+      const baseLink = (yield (0, import_http.fetchText)(md5Url, {
+        headers: { "User-Agent": import_http.UA, "Referer": embedUrl }
       })).trim();
       const directUrl = token && expiry ? `${baseLink}?token=${token}&expiry=${expiry}000` : baseLink;
       return [{
@@ -239,7 +262,7 @@ function extractDoodStream(url) {
         title: "DoodStream",
         url: directUrl,
         quality: "auto",
-        headers: { "User-Agent": UA, "Referer": embedOrigin + "/" }
+        headers: { "User-Agent": import_http.UA, "Referer": embedOrigin + "/" }
       }];
     } catch (e) {
       return null;
@@ -266,14 +289,14 @@ function extractFilemoon(url) {
       const rootRef = `https://${host}/`;
       const embedUrl = `https://${host}/e/${mediaId}`;
       const headers = {
-        "User-Agent": UA,
+        "User-Agent": import_http.UA,
         "Referer": rootRef,
         "Origin": `https://${host}`,
         "X-Requested-With": "XMLHttpRequest"
       };
       try {
         const apiUrl = `https://${host}/api/videos/${mediaId}/embed/playback`;
-        const json = yield fetchJson(apiUrl, { headers });
+        const json = yield (0, import_http.fetchJson)(apiUrl, { headers });
         const sources = json.sources;
         if (sources && sources.length) {
           return sources.map((s) => ({
@@ -281,13 +304,13 @@ function extractFilemoon(url) {
             title: s.label ? `Filemoon ${s.label}p` : "Filemoon",
             url: s.url,
             quality: s.label || "auto",
-            headers: { "Referer": rootRef, "User-Agent": UA }
+            headers: { "Referer": rootRef, "User-Agent": import_http.UA }
           }));
         }
       } catch (e) {
       }
-      const html = yield fetchText(embedUrl, {
-        headers: { "User-Agent": UA, "Referer": rootRef }
+      const html = yield (0, import_http.fetchText)(embedUrl, {
+        headers: { "User-Agent": import_http.UA, "Referer": rootRef }
       });
       const sourcesMatch = html.match(/sources\s*:\s*\[\s*\{[^}]*?file\s*:\s*["']([^"']+)["']/);
       if (sourcesMatch) {
@@ -296,7 +319,7 @@ function extractFilemoon(url) {
           title: "Filemoon",
           url: sourcesMatch[1],
           quality: "auto",
-          headers: { "Referer": rootRef, "User-Agent": UA }
+          headers: { "Referer": rootRef, "User-Agent": import_http.UA }
         }];
       }
       const jwMatch = html.match(/file\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/);
@@ -306,7 +329,7 @@ function extractFilemoon(url) {
           title: "Filemoon",
           url: jwMatch[1],
           quality: "auto",
-          headers: { "Referer": rootRef, "User-Agent": UA }
+          headers: { "Referer": rootRef, "User-Agent": import_http.UA }
         }];
       }
       const m3u8Match = html.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/);
@@ -316,7 +339,7 @@ function extractFilemoon(url) {
           title: "Filemoon",
           url: m3u8Match[1],
           quality: "auto",
-          headers: { "Referer": rootRef, "User-Agent": UA }
+          headers: { "Referer": rootRef, "User-Agent": import_http.UA }
         }];
       }
       return null;
@@ -343,9 +366,9 @@ function extractLuluStream(url) {
     try {
       const embedUrl = url.includes("/e/") ? url : url.replace("/d/", "/e/");
       const origin = new URL(embedUrl).origin;
-      const html = yield fetchText(embedUrl, {
+      const html = yield (0, import_http.fetchText)(embedUrl, {
         headers: {
-          "User-Agent": UA,
+          "User-Agent": import_http.UA,
           "Referer": url,
           "Origin": origin
         }
@@ -357,7 +380,7 @@ function extractLuluStream(url) {
           title: "LuluStream",
           url: sourcesMatch[1],
           quality: "auto",
-          headers: { "Referer": embedUrl, "Origin": origin, "User-Agent": UA }
+          headers: { "Referer": embedUrl, "Origin": origin, "User-Agent": import_http.UA }
         }];
       }
       const m3u8Direct = html.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/);
@@ -367,7 +390,7 @@ function extractLuluStream(url) {
           title: "LuluStream",
           url: m3u8Direct[1],
           quality: "auto",
-          headers: { "Referer": embedUrl, "Origin": origin, "User-Agent": UA }
+          headers: { "Referer": embedUrl, "Origin": origin, "User-Agent": import_http.UA }
         }];
       }
       const packedBlock = ((_a = html.match(/\}\s*\('[\s\S]+?'\s*\.split\('\|'\)\s*\)\s*\)/)) == null ? void 0 : _a[0]) || ((_b = html.match(/\}\s*\('([\s\S]+?)',(\d+),(\d+),'([\s\S]+?)'\.split\('\|'\)/)) == null ? void 0 : _b[0]);
@@ -383,7 +406,7 @@ function extractLuluStream(url) {
               title: "LuluStream",
               url: videoUrl,
               quality: "auto",
-              headers: { "Referer": embedUrl, "Origin": origin, "User-Agent": UA }
+              headers: { "Referer": embedUrl, "Origin": origin, "User-Agent": import_http.UA }
             }];
           }
         }
@@ -396,7 +419,7 @@ function extractLuluStream(url) {
           title: "LuluStream",
           url: videoUrl,
           quality: "auto",
-          headers: { "Referer": embedUrl, "Origin": origin, "User-Agent": UA }
+          headers: { "Referer": embedUrl, "Origin": origin, "User-Agent": import_http.UA }
         }];
       }
       return null;
@@ -423,18 +446,17 @@ function extractPlayer4Me(url) {
       const mainUrl = parsedUrl.origin;
       const id = parsedUrl.hash.slice(1) || parsedUrl.searchParams.get("id") || parsedUrl.pathname.split("/").filter(Boolean).pop();
       const apiUrl = `${mainUrl}/api/v1/video?id=${id}`;
-      const raw = (yield fetchText(apiUrl, {
+      const raw = (yield (0, import_http.fetchText)(apiUrl, {
         headers: {
           "Host": parsedUrl.host,
-          "User-Agent": UA,
+          "User-Agent": import_http.UA,
           "Accept": "*/*",
           "Cookie": "popunderCount/=1",
           "Referer": mainUrl + "/",
           "Origin": mainUrl
         }
       })).trim();
-      if (!raw || raw.startsWith("<"))
-        return null;
+      if (!raw || raw.startsWith("<")) return null;
       try {
         const data = JSON.parse(raw);
         const videoUrl = data.source || data.hls || data.cf || data.url;
@@ -444,7 +466,7 @@ function extractPlayer4Me(url) {
             title: "Player4Me",
             url: videoUrl,
             quality: "auto",
-            headers: { "User-Agent": UA, "Referer": mainUrl + "/" }
+            headers: { "User-Agent": import_http.UA, "Referer": mainUrl + "/" }
           }];
         }
       } catch (e) {
@@ -464,7 +486,7 @@ function extractPlayer4Me(url) {
               title: "Player4Me",
               url: videoUrl,
               quality: "auto",
-              headers: { "User-Agent": UA, "Referer": mainUrl + "/" }
+              headers: { "User-Agent": import_http.UA, "Referer": mainUrl + "/" }
             }];
           }
         } catch (e) {
@@ -482,7 +504,7 @@ function isVidguard(url) {
 function extractVidguard(url) {
   return __async(this, null, function* () {
     try {
-      const html = yield fetchText(url, { headers: { "User-Agent": UA, "Referer": "https://vidguard.to/" } });
+      const html = yield (0, import_http.fetchText)(url, { headers: { "User-Agent": import_http.UA, "Referer": "https://vidguard.to/" } });
       const jwMatch = html.match(/file\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/);
       if (jwMatch) {
         return [{
@@ -490,7 +512,7 @@ function extractVidguard(url) {
           title: "Vidguard",
           url: jwMatch[1],
           quality: "auto",
-          headers: { "Referer": "https://vidguard.to/", "User-Agent": UA }
+          headers: { "Referer": "https://vidguard.to/", "User-Agent": import_http.UA }
         }];
       }
       const sigMatch = html.match(/sig=([a-fA-F0-9]{20,})/);
@@ -517,7 +539,7 @@ function extractVidguard(url) {
               title: "Vidguard",
               url: streamUrl,
               quality: "auto",
-              headers: { "Referer": "https://vidguard.to/", "User-Agent": UA }
+              headers: { "Referer": "https://vidguard.to/", "User-Agent": import_http.UA }
             }];
           }
         } catch (e) {
@@ -530,7 +552,7 @@ function extractVidguard(url) {
           title: "Vidguard",
           url: fallback[1],
           quality: "auto",
-          headers: { "Referer": "https://vidguard.to/", "User-Agent": UA }
+          headers: { "Referer": "https://vidguard.to/", "User-Agent": import_http.UA }
         }];
       }
       return null;
@@ -546,8 +568,8 @@ function extractVidNest(url) {
   return __async(this, null, function* () {
     try {
       const host = new URL(url).origin;
-      const html = yield fetchText(url, {
-        headers: { "User-Agent": UA, "Referer": `${host}/` }
+      const html = yield (0, import_http.fetchText)(url, {
+        headers: { "User-Agent": import_http.UA, "Referer": `${host}/` }
       });
       const sourcesMatch = html.match(/sources\s*:\s*\[\s*\{[^}]*?file\s*:\s*["']([^"']+)["']/);
       if (sourcesMatch) {
@@ -557,7 +579,7 @@ function extractVidNest(url) {
           title: `VidNest ${(labelMatch == null ? void 0 : labelMatch[1]) || ""}`.trim(),
           url: sourcesMatch[1],
           quality: (labelMatch == null ? void 0 : labelMatch[1]) || "auto",
-          headers: { "User-Agent": UA, "Referer": `${host}/`, "Origin": host }
+          headers: { "User-Agent": import_http.UA, "Referer": `${host}/`, "Origin": host }
         }];
       }
       const fileMatch = html.match(/file\s*:\s*["']([^"']+\.(?:mp4|m3u8)[^"']*)["']/);
@@ -568,7 +590,7 @@ function extractVidNest(url) {
           title: `VidNest ${(labelMatch == null ? void 0 : labelMatch[1]) || ""}`.trim(),
           url: fileMatch[1],
           quality: (labelMatch == null ? void 0 : labelMatch[1]) || "auto",
-          headers: { "User-Agent": UA, "Referer": `${host}/`, "Origin": host }
+          headers: { "User-Agent": import_http.UA, "Referer": `${host}/`, "Origin": host }
         }];
       }
       return null;
@@ -593,7 +615,7 @@ function isStreamwish(url) {
 function extractStreamwish(url) {
   return __async(this, null, function* () {
     try {
-      const html = yield fetchText(url, { headers: { "User-Agent": UA, "Referer": url } });
+      const html = yield (0, import_http.fetchText)(url, { headers: { "User-Agent": import_http.UA, "Referer": url } });
       const sourcesMatch = html.match(/sources\s*:\s*\[\s*\{[^}]*?file\s*:\s*["']([^"']+)["']/);
       if (sourcesMatch) {
         return [{
@@ -601,7 +623,7 @@ function extractStreamwish(url) {
           title: "Streamwish",
           url: sourcesMatch[1],
           quality: "auto",
-          headers: { "User-Agent": UA }
+          headers: { "User-Agent": import_http.UA }
         }];
       }
       const fileMatch = html.match(/file\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/);
@@ -611,7 +633,7 @@ function extractStreamwish(url) {
           title: "Streamwish",
           url: fileMatch[1],
           quality: "auto",
-          headers: { "User-Agent": UA }
+          headers: { "User-Agent": import_http.UA }
         }];
       }
       const m3u8Match = html.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/);
@@ -621,7 +643,7 @@ function extractStreamwish(url) {
           title: "Streamwish",
           url: m3u8Match[1],
           quality: "auto",
-          headers: { "User-Agent": UA }
+          headers: { "User-Agent": import_http.UA }
         }];
       }
       return null;
@@ -638,8 +660,8 @@ function extractVidhidepro(url) {
   return __async(this, null, function* () {
     try {
       const origin = new URL(url).origin;
-      const html = yield fetchText(url, {
-        headers: { "User-Agent": UA, "Referer": origin + "/" }
+      const html = yield (0, import_http.fetchText)(url, {
+        headers: { "User-Agent": import_http.UA, "Referer": origin + "/" }
       });
       const sourcesMatch = html.match(/sources\s*:\s*\[\s*\{[^}]*?file\s*:\s*["']([^"']+)["']/);
       if (sourcesMatch) {
@@ -648,7 +670,7 @@ function extractVidhidepro(url) {
           title: "Vidhidepro",
           url: sourcesMatch[1],
           quality: "auto",
-          headers: { "Referer": origin + "/", "User-Agent": UA }
+          headers: { "Referer": origin + "/", "User-Agent": import_http.UA }
         }];
       }
       const fileMatch = html.match(/file\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/);
@@ -658,7 +680,7 @@ function extractVidhidepro(url) {
           title: "Vidhidepro",
           url: fileMatch[1],
           quality: "auto",
-          headers: { "Referer": origin + "/", "User-Agent": UA }
+          headers: { "Referer": origin + "/", "User-Agent": import_http.UA }
         }];
       }
       const m3u8Match = html.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/);
@@ -668,7 +690,7 @@ function extractVidhidepro(url) {
           title: "Vidhidepro",
           url: m3u8Match[1],
           quality: "auto",
-          headers: { "Referer": origin + "/", "User-Agent": UA }
+          headers: { "Referer": origin + "/", "User-Agent": import_http.UA }
         }];
       }
       return null;
@@ -684,7 +706,7 @@ function extractMaxstream(url) {
   return __async(this, null, function* () {
     var _a, _b;
     try {
-      const html = yield fetchText(url, { headers: { "User-Agent": UA } });
+      const html = yield (0, import_http.fetchText)(url, { headers: { "User-Agent": import_http.UA } });
       const directMatch = html.match(/file\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/);
       if (directMatch) {
         return [{
@@ -692,7 +714,7 @@ function extractMaxstream(url) {
           title: "Maxstream",
           url: directMatch[1],
           quality: "auto",
-          headers: { "User-Agent": UA }
+          headers: { "User-Agent": import_http.UA }
         }];
       }
       const packed = ((_a = html.match(/\}\s*\('([^']+)',(\d+),(\d+),'([^']+)'\.split\('\|'\)/)) == null ? void 0 : _a[0]) || ((_b = html.match(/function\(p,a,c,k,e,d\)[\s\S]+?(?=<\/script>)/)) == null ? void 0 : _b[0]);
@@ -706,7 +728,7 @@ function extractMaxstream(url) {
               title: "Maxstream",
               url: fileMatch[1],
               quality: "auto",
-              headers: { "User-Agent": UA }
+              headers: { "User-Agent": import_http.UA }
             }];
           }
         }
@@ -718,7 +740,7 @@ function extractMaxstream(url) {
           title: "Maxstream",
           url: m3u8Match[1],
           quality: "auto",
-          headers: { "User-Agent": UA }
+          headers: { "User-Agent": import_http.UA }
         }];
       }
       return null;
@@ -730,8 +752,7 @@ function extractMaxstream(url) {
 function unpackJS(packed) {
   try {
     const match = packed.match(/\('([\s\S]+?)',(\d+),(\d+),'([\s\S]+?)'\.split\('\|'\)/) || packed.match(/\('([^']+)',(\d+),(\d+),'([^']+)'\.split\('\|'\)/);
-    if (!match)
-      return null;
+    if (!match) return null;
     const [, p, a, , k] = match;
     const keywords = k.split("|");
     const base = parseInt(a);
@@ -749,8 +770,8 @@ function isJavclan(url) {
 function extractJavclan(url, referer) {
   return __async(this, null, function* () {
     try {
-      const html = yield fetchText(url, {
-        headers: { "User-Agent": UA, "Referer": referer || url }
+      const html = yield (0, import_http.fetchText)(url, {
+        headers: { "User-Agent": import_http.UA, "Referer": referer || url }
       });
       const sourcesMatch = html.match(/sources\s*:\s*\[\s*\{[^}]*?file\s*:\s*["']([^"']+)["']/);
       if (sourcesMatch) {
@@ -759,7 +780,7 @@ function extractJavclan(url, referer) {
           title: "Javclan",
           url: sourcesMatch[1],
           quality: "auto",
-          headers: { "Referer": referer || url, "User-Agent": UA }
+          headers: { "Referer": referer || url, "User-Agent": import_http.UA }
         }];
       }
       const fileMatch = html.match(/file\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/);
@@ -769,7 +790,7 @@ function extractJavclan(url, referer) {
           title: "Javclan",
           url: fileMatch[1],
           quality: "auto",
-          headers: { "Referer": referer || url, "User-Agent": UA }
+          headers: { "Referer": referer || url, "User-Agent": import_http.UA }
         }];
       }
       return null;
@@ -784,7 +805,7 @@ function isJavggvideo(url) {
 function extractJavggvideo(url) {
   return __async(this, null, function* () {
     try {
-      const html = yield fetchText(url, { headers: { "User-Agent": UA } });
+      const html = yield (0, import_http.fetchText)(url, { headers: { "User-Agent": import_http.UA } });
       const varPatterns = [
         /var\s+urlPlay\s*=\s*['"]([^'"]+)['"]/,
         /urlPlay\s*=\s*['"]([^'"]+)['"]/,
@@ -800,7 +821,7 @@ function extractJavggvideo(url) {
             title: "Javggvideo",
             url: match[1],
             quality: "auto",
-            headers: { "User-Agent": UA }
+            headers: { "User-Agent": import_http.UA }
           }];
         }
       }
@@ -811,7 +832,7 @@ function extractJavggvideo(url) {
           title: "Javggvideo",
           url: sourcesMatch[1],
           quality: "auto",
-          headers: { "User-Agent": UA }
+          headers: { "User-Agent": import_http.UA }
         }];
       }
       const fileMatch = html.match(/file\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/);
@@ -821,7 +842,7 @@ function extractJavggvideo(url) {
           title: "Javggvideo",
           url: fileMatch[1],
           quality: "auto",
-          headers: { "User-Agent": UA }
+          headers: { "User-Agent": import_http.UA }
         }];
       }
       const m3u8Match = html.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/);
@@ -831,7 +852,7 @@ function extractJavggvideo(url) {
           title: "Javggvideo",
           url: m3u8Match[1],
           quality: "auto",
-          headers: { "User-Agent": UA }
+          headers: { "User-Agent": import_http.UA }
         }];
       }
       return null;
@@ -847,7 +868,7 @@ function extractMixDrop(url) {
   return __async(this, null, function* () {
     var _a;
     try {
-      const html = yield fetchText(url, { headers: { "User-Agent": UA } });
+      const html = yield (0, import_http.fetchText)(url, { headers: { "User-Agent": import_http.UA } });
       const packed = (_a = html.match(/\}\s*\('([^']+)',(\d+),(\d+),'([^']+)'\.split\('\|'\)/)) == null ? void 0 : _a[0];
       if (packed) {
         const decoded = unpackJS(packed);
@@ -860,7 +881,7 @@ function extractMixDrop(url) {
               title: "MixDrop",
               url: videoUrl,
               quality: "auto",
-              headers: { "User-Agent": UA, "Referer": "https://mixdrop.ag/" }
+              headers: { "User-Agent": import_http.UA, "Referer": "https://mixdrop.ag/" }
             }];
           }
         }
@@ -873,7 +894,7 @@ function extractMixDrop(url) {
           title: "MixDrop",
           url: videoUrl,
           quality: "auto",
-          headers: { "User-Agent": UA, "Referer": "https://mixdrop.ag/" }
+          headers: { "User-Agent": import_http.UA, "Referer": "https://mixdrop.ag/" }
         }];
       }
       return null;
@@ -897,16 +918,14 @@ function isStreamtape(url) {
 function extractStreamtape(url) {
   return __async(this, null, function* () {
     try {
-      const html = yield fetchText(url, { headers: { "User-Agent": UA, "Referer": url } });
+      const html = yield (0, import_http.fetchText)(url, { headers: { "User-Agent": import_http.UA, "Referer": url } });
       const stRegex = /getElementById\(['"](?:robotlink|botlink|ideoolink)['"]\)[^.]*\.innerHTML\s*=\s*['"]([^'"]+)['"]\s*\+\s*\(['"]([^'"]+)['"]\)((?:\.substring\(\d+\))*)/g;
       let stMatch, lastMatch;
-      while ((stMatch = stRegex.exec(html)) !== null)
-        lastMatch = stMatch;
+      while ((stMatch = stRegex.exec(html)) !== null) lastMatch = stMatch;
       if (lastMatch) {
         let [, part1, raw2, substrs] = lastMatch;
         const subNums = substrs.match(/\d+/g) || [];
-        for (const n of subNums)
-          raw2 = raw2.substring(parseInt(n));
+        for (const n of subNums) raw2 = raw2.substring(parseInt(n));
         const raw = (part1 + raw2).replace(/\s/g, "");
         const videoUrl = raw.startsWith("http") ? raw : raw.startsWith("//") ? "https:" + raw : raw.startsWith("/") ? "https://streamtape.com" + raw : "https://" + raw;
         return [{
@@ -914,7 +933,7 @@ function extractStreamtape(url) {
           title: "StreamTape",
           url: videoUrl,
           quality: "auto",
-          headers: { "User-Agent": UA, "Referer": url }
+          headers: { "User-Agent": import_http.UA, "Referer": url }
         }];
       }
       const robotDiv = html.match(/id=["']robotlink["'][^>]*>([^<]+)</);
@@ -927,7 +946,7 @@ function extractStreamtape(url) {
             title: "StreamTape",
             url: videoUrl,
             quality: "auto",
-            headers: { "User-Agent": UA, "Referer": url }
+            headers: { "User-Agent": import_http.UA, "Referer": url }
           }];
         }
       }
@@ -938,7 +957,7 @@ function extractStreamtape(url) {
           title: "StreamTape",
           url: mp4Match[1],
           quality: "auto",
-          headers: { "User-Agent": UA, "Referer": url }
+          headers: { "User-Agent": import_http.UA, "Referer": url }
         }];
       }
       return null;
@@ -966,10 +985,8 @@ function rot13(str) {
   let out = "";
   for (let i = 0; i < str.length; i++) {
     let c = str.charCodeAt(i);
-    if (c >= 65 && c <= 90)
-      c = (c - 65 + 13) % 26 + 65;
-    else if (c >= 97 && c <= 122)
-      c = (c - 97 + 13) % 26 + 97;
+    if (c >= 65 && c <= 90) c = (c - 65 + 13) % 26 + 65;
+    else if (c >= 97 && c <= 122) c = (c - 97 + 13) % 26 + 97;
     out += String.fromCharCode(c);
   }
   return out;
@@ -999,15 +1016,14 @@ function isVoe(url) {
 function extractVoe(url) {
   return __async(this, null, function* () {
     const mediaId = (url.match(/\/e\/([a-zA-Z0-9]+)/) || [])[1];
-    if (!mediaId)
-      return null;
+    if (!mediaId) return null;
     const candidates = [url, ...VOE_UNPROTECTED_MIRRORS.map((h) => `https://${h}/e/${mediaId}`)];
     for (const candidateUrl of candidates) {
       try {
         const origin = new URL(candidateUrl).origin;
-        const html = yield fetchText(candidateUrl, {
+        const html = yield (0, import_http.fetchText)(candidateUrl, {
           headers: {
-            "User-Agent": UA,
+            "User-Agent": import_http.UA,
             "Referer": candidateUrl,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
           }
@@ -1019,15 +1035,14 @@ function extractVoe(url) {
         if (jsRedirectMatch) {
           const nextUrl = jsRedirectMatch[1];
           const nextOrigin = new URL(nextUrl).origin;
-          const nextHtml = yield fetchText(nextUrl, {
+          const nextHtml = yield (0, import_http.fetchText)(nextUrl, {
             headers: {
-              "User-Agent": UA,
+              "User-Agent": import_http.UA,
               "Referer": candidateUrl,
               "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
             }
           });
-          if (nextHtml.includes("ddos-guard") || nextHtml.includes("DDoS-Guard"))
-            continue;
+          if (nextHtml.includes("ddos-guard") || nextHtml.includes("DDoS-Guard")) continue;
           const jsonMatch2 = nextHtml.match(/<script type="application\/json">\["([^"]+)"\]<\/script>/);
           if (jsonMatch2) {
             const decoded = decodeVoe(jsonMatch2[1]);
@@ -1037,7 +1052,7 @@ function extractVoe(url) {
                 title: "VOE",
                 url: decoded.source,
                 quality: decoded.quality || "auto",
-                headers: { "Referer": nextOrigin + "/", "User-Agent": UA }
+                headers: { "Referer": nextOrigin + "/", "User-Agent": import_http.UA }
               }];
             }
           }
@@ -1051,7 +1066,7 @@ function extractVoe(url) {
               title: "VOE",
               url: decoded.source,
               quality: decoded.quality || "auto",
-              headers: { "Referer": origin + "/", "User-Agent": UA }
+              headers: { "Referer": origin + "/", "User-Agent": import_http.UA }
             }];
           }
         }
@@ -1062,7 +1077,7 @@ function extractVoe(url) {
             title: "VOE",
             url: hlsMatch[1],
             quality: "auto",
-            headers: { "Referer": origin + "/", "User-Agent": UA }
+            headers: { "Referer": origin + "/", "User-Agent": import_http.UA }
           }];
         }
         const packed = html.match(new RegExp("eval\\(function\\(p,a,c,k,e,[rd]\\).*?\\}\\(.*\\)\\)", "s"));
@@ -1076,7 +1091,7 @@ function extractVoe(url) {
                 title: "VOE",
                 url: m3u8InPacked[1],
                 quality: "auto",
-                headers: { "Referer": origin + "/", "User-Agent": UA }
+                headers: { "Referer": origin + "/", "User-Agent": import_http.UA }
               }];
             }
           }
@@ -1118,34 +1133,20 @@ function isKnownEmbedHost(url) {
 }
 function extractFromUrl(url, referer) {
   return __async(this, null, function* () {
-    if (isDoodStream(url))
-      return extractDoodStream(url);
-    if (isFilemoon(url))
-      return extractFilemoon(url);
-    if (isLuluStream(url))
-      return extractLuluStream(url);
-    if (isPlayer4Me(url))
-      return extractPlayer4Me(url);
-    if (isVidguard(url))
-      return extractVidguard(url);
-    if (isVidNest(url))
-      return extractVidNest(url);
-    if (isStreamwish(url))
-      return extractStreamwish(url);
-    if (isVidhidepro(url))
-      return extractVidhidepro(url);
-    if (isMaxstream(url))
-      return extractMaxstream(url);
-    if (isJavclan(url))
-      return extractJavclan(url, referer);
-    if (isJavggvideo(url))
-      return extractJavggvideo(url);
-    if (isMixDrop(url))
-      return extractMixDrop(url);
-    if (isStreamtape(url))
-      return extractStreamtape(url);
-    if (isVoe(url))
-      return extractVoe(url);
+    if (isDoodStream(url)) return extractDoodStream(url);
+    if (isFilemoon(url)) return extractFilemoon(url);
+    if (isLuluStream(url)) return extractLuluStream(url);
+    if (isPlayer4Me(url)) return extractPlayer4Me(url);
+    if (isVidguard(url)) return extractVidguard(url);
+    if (isVidNest(url)) return extractVidNest(url);
+    if (isStreamwish(url)) return extractStreamwish(url);
+    if (isVidhidepro(url)) return extractVidhidepro(url);
+    if (isMaxstream(url)) return extractMaxstream(url);
+    if (isJavclan(url)) return extractJavclan(url, referer);
+    if (isJavggvideo(url)) return extractJavggvideo(url);
+    if (isMixDrop(url)) return extractMixDrop(url);
+    if (isStreamtape(url)) return extractStreamtape(url);
+    if (isVoe(url)) return extractVoe(url);
     return null;
   });
 }
@@ -1217,24 +1218,19 @@ function isBlocked(title) {
 
 // src/shared/utils.js
 function cleanTitle(title) {
-  if (!title)
-    return "";
+  if (!title) return "";
   return title.toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim();
 }
 function isMatch(resultTitle, expectedTitle) {
-  if (!resultTitle || !expectedTitle)
-    return false;
+  if (!resultTitle || !expectedTitle) return false;
   const cleanResult = cleanTitle(resultTitle);
   const cleanExpected = cleanTitle(expectedTitle);
-  if (cleanResult === cleanExpected)
-    return true;
-  if (cleanResult.includes(cleanExpected))
-    return true;
+  if (cleanResult === cleanExpected) return true;
+  if (cleanResult.includes(cleanExpected)) return true;
   const expectedWords = cleanExpected.split(" ").filter((w) => w.length > 2);
   if (expectedWords.length > 0) {
     const allWordsPresent = expectedWords.every((word) => cleanResult.includes(word));
-    if (allWordsPresent)
-      return true;
+    if (allWordsPresent) return true;
   }
   return false;
 }
@@ -1246,7 +1242,7 @@ var NAV_PATHS = /\/(movies-2|xxxfree|most-viewed-2|most-rating-2|director|genre|
 function searchSite(query, expectedTitle) {
   return __async(this, null, function* () {
     const url = `${BASE_URL}/?s=${encodeURIComponent(query)}`;
-    const html = yield fetchText(url);
+    const html = yield (0, import_http2.fetchText)(url);
     const $ = import_cheerio_without_node_native.default.load(html);
     const results = [];
     const seen = /* @__PURE__ */ new Set();
@@ -1291,13 +1287,12 @@ function searchSite(query, expectedTitle) {
 }
 function getVideoLinks(pageUrl) {
   return __async(this, null, function* () {
-    const html = yield fetchText(pageUrl);
+    const html = yield (0, import_http2.fetchText)(pageUrl);
     const $ = import_cheerio_without_node_native.default.load(html);
     const links = /* @__PURE__ */ new Set();
     $("div#pettabs div.Rtable1-cell a").each((_, el) => {
       const href = $(el).attr("href");
-      if (href && href.startsWith("http"))
-        links.add(href);
+      if (href && href.startsWith("http")) links.add(href);
     });
     if (!links.size) {
       const selectors = [
@@ -1314,11 +1309,9 @@ function getVideoLinks(pageUrl) {
       for (const sel of selectors) {
         $(sel).each((_, el) => {
           const href = $(el).attr("href");
-          if (href && href.startsWith("http"))
-            links.add(href);
+          if (href && href.startsWith("http")) links.add(href);
         });
-        if (links.size)
-          break;
+        if (links.size) break;
       }
     }
     if (!links.size) {
@@ -1334,11 +1327,10 @@ function getVideoLinks(pageUrl) {
 }
 function extractStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
-    const metadata = yield resolveMetadata(tmdbId, mediaType);
+    const metadata = yield (0, import_http2.resolveMetadata)(tmdbId, mediaType);
     const query = metadata.title || String(tmdbId);
     const results = yield searchSite(query, metadata.title);
-    if (!results.length)
-      return [];
+    if (!results.length) return [];
     const streams = [];
     for (const result of results.slice(0, 3)) {
       const videoLinks = yield getVideoLinks(result.href);
@@ -1350,8 +1342,7 @@ function extractStreams(tmdbId, mediaType, season, episode) {
           })));
         }
       }
-      if (streams.length > 0)
-        break;
+      if (streams.length > 0) break;
     }
     return streams;
   });

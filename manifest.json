@@ -1,15 +1,16 @@
 {
   "name": "Bagol Repo",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "scrapers": [
     {
       "id": "mangoporn",
       "name": "Mangoporn",
-      "description": "Adult movies from mangoporn.net — DoodStream, Filemoon, LuluStream, Vidguard, Player4Me, VidNest",
+      "description": "Adult movies from mangoporn.net \u2014 DoodStream, Filemoon, LuluStream, Vidguard, Player4Me, VidNest",
       "version": "1.0.0",
       "author": "kraptor",
       "supportedTypes": [
-        "movie"
+        "movie",
+        "tv"
       ],
       "filename": "providers/mangoporn.js",
       "enabled": true,
@@ -26,11 +27,12 @@
     {
       "id": "xxxparodyhd",
       "name": "XXXParodyHD",
-      "description": "Parody adult movies from xxxparodyhd.net — DoodStream, Streamwish, Vidhidepro, Javggvideo",
+      "description": "Parody adult movies from xxxparodyhd.net \u2014 DoodStream, Streamwish, Vidhidepro, Javggvideo",
       "version": "1.0.0",
       "author": "kraptor",
       "supportedTypes": [
-        "movie"
+        "movie",
+        "tv"
       ],
       "filename": "providers/xxxparodyhd.js",
       "enabled": true,
@@ -47,11 +49,12 @@
     {
       "id": "pornwatch",
       "name": "PornWatch",
-      "description": "Adult movies and scenes from pornwatch.ws — DoodStream, Player4Me",
+      "description": "Adult movies and scenes from pornwatch.ws \u2014 DoodStream, Player4Me",
       "version": "1.0.0",
       "author": "kraptor",
       "supportedTypes": [
-        "movie"
+        "movie",
+        "tv"
       ],
       "filename": "providers/pornwatch.js",
       "enabled": true,
