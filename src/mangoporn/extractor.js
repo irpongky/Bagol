@@ -1,11 +1,12 @@
-import { fetchText, getTitleFromTmdb } from '../shared/http.js';
+import { fetchText, resolveMetadata } from '../shared/http.js';
 import { extractFromUrl, isKnownEmbedHost } from '../shared/extractors.js';
 import { isBlocked } from '../shared/filters.js';
+import { isMatch } from '../shared/utils.js';
 import cheerio from 'cheerio-without-node-native';
 
 const BASE_URL = 'https://mangoporn.net';
 
-async function searchSite(query) {
+async function searchSite(query, expectedTitle) {
     const url = `${BASE_URL}/page/1/?s=${encodeURIComponent(query)}`;
     const html = await fetchText(url);
     const $ = cheerio.load(html);
@@ -21,9 +22,13 @@ async function searchSite(query) {
             || $(el).find('div.details a').attr('href')
             || $(el).find('h3 a').attr('href')
             || $(el).find('a').first().attr('href');
+            
         if (title && href && !isBlocked(title) && !seen.has(href)) {
-            seen.add(href);
-            results.push({ title, href });
+            const matched = isMatch(title, expectedTitle);
+            if (matched) {
+                seen.add(href);
+                results.push({ title, href });
+            }
         }
     });
 
@@ -33,8 +38,10 @@ async function searchSite(query) {
             const title = $(el).find('h2, h3, .title').first().text().trim();
             const href = $(el).find('a').first().attr('href');
             if (title && href && href.startsWith('http') && !isBlocked(title) && !seen.has(href)) {
-                seen.add(href);
-                results.push({ title, href });
+                if (isMatch(title, expectedTitle)) {
+                    seen.add(href);
+                    results.push({ title, href });
+                }
             }
         });
     }
@@ -104,10 +111,10 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
         return streams;
     }
 
-    const title = await getTitleFromTmdb(tmdbId, mediaType);
-    const query = title || String(tmdbId);
+    const metadata = await resolveMetadata(tmdbId, mediaType);
+    const query = metadata.title || String(tmdbId);
 
-    const results = await searchSite(query);
+    const results = await searchSite(query, metadata.title);
     if (!results.length) return [];
 
     const streams = [];

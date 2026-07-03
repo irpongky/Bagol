@@ -4,6 +4,7 @@
   "description": "Nuvio providers by kraptor",
   "scripts": {
     "start": "node server.js",
+    "test": "node check_system.js",
     "build": "node build.js",
     "build:minify": "node build.js --minify",
     "build:mangoporn": "node build.js mangoporn",

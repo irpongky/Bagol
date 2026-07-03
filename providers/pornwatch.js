@@ -105,12 +105,15 @@ var TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 var TMDB_BASE_URL = "https://api.themoviedb.org/3";
 function getTitleFromTmdb(tmdbId, mediaType) {
   return __async(this, null, function* () {
+    if (!tmdbId)
+      return null;
     try {
-      const endpoint = mediaType === "tv" ? `${TMDB_BASE_URL}/tv/${tmdbId}` : `${TMDB_BASE_URL}/movie/${tmdbId}`;
+      const type = mediaType === "tv" ? "tv" : "movie";
+      const url = `${TMDB_BASE_URL}/${type}/${tmdbId}?language=en-US&api_key=${TMDB_API_KEY}`;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 5e3);
       try {
-        const res = yield fetch(`${endpoint}?language=en-US&api_key=${TMDB_API_KEY}`, { signal: controller.signal });
+        const res = yield fetch(url, { signal: controller.signal });
         if (!res.ok)
           return null;
         const data = yield res.json();
@@ -121,6 +124,50 @@ function getTitleFromTmdb(tmdbId, mediaType) {
     } catch (e) {
       return null;
     }
+  });
+}
+function resolveMetadata(id, mediaType) {
+  return __async(this, null, function* () {
+    var _a, _b;
+    if (!id)
+      return { title: null, id: null };
+    const idStr = String(id);
+    if (idStr.startsWith("tt")) {
+      try {
+        const url = `${TMDB_BASE_URL}/find/${idStr}?external_source=imdb_id&api_key=${TMDB_API_KEY}`;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5e3);
+        try {
+          const res = yield fetch(url, { signal: controller.signal });
+          if (!res.ok)
+            return { title: null, id: idStr };
+          const data = yield res.json();
+          const movie = (_a = data.movie_results) == null ? void 0 : _a[0];
+          const tv = (_b = data.tv_results) == null ? void 0 : _b[0];
+          if (movie)
+            return { title: movie.title, id: movie.id, type: "movie" };
+          if (tv)
+            return { title: tv.name, id: tv.id, type: "tv" };
+          return { title: null, id: idStr };
+        } finally {
+          clearTimeout(timer);
+        }
+      } catch (e) {
+        return { title: null, id: idStr };
+      }
+    }
+    if (idStr.startsWith("tmdb:")) {
+      const parts = idStr.split(":");
+      let tmdbId = parts[parts.length - 1];
+      let type = mediaType;
+      if (parts.length === 3) {
+        type = parts[1];
+      }
+      const title2 = yield getTitleFromTmdb(tmdbId, type);
+      return { title: title2, id: tmdbId, type };
+    }
+    const title = yield getTitleFromTmdb(idStr, mediaType);
+    return { title, id: idStr, type: mediaType };
   });
 }
 
@@ -911,74 +958,133 @@ var VOE_HOSTS = [
   "voefence.com",
   "voeshine.com"
 ];
+var VOE_UNPROTECTED_MIRRORS = [
+  "garylargeavailable.com",
+  "bryantenunder.com"
+];
+function rot13(str) {
+  let out = "";
+  for (let i = 0; i < str.length; i++) {
+    let c = str.charCodeAt(i);
+    if (c >= 65 && c <= 90)
+      c = (c - 65 + 13) % 26 + 65;
+    else if (c >= 97 && c <= 122)
+      c = (c - 97 + 13) % 26 + 97;
+    out += String.fromCharCode(c);
+  }
+  return out;
+}
+function decodeVoe(encodedStr) {
+  try {
+    let rot = rot13(encodedStr);
+    const separators = ["@\\$", "\\^\\^", "~@", "%\\?", "\\*~", "!!", "#&"];
+    separators.forEach((sep) => {
+      rot = rot.replace(new RegExp(sep, "g"), "");
+    });
+    let b64 = atob(rot);
+    let shifted = "";
+    for (let i = 0; i < b64.length; i++) {
+      shifted += String.fromCharCode(b64.charCodeAt(i) - 3);
+    }
+    let reversed = shifted.split("").reverse().join("");
+    let finalJson = decodeURIComponent(escape(atob(reversed)));
+    return JSON.parse(finalJson);
+  } catch (e) {
+    return null;
+  }
+}
 function isVoe(url) {
   return VOE_HOSTS.some((h) => url.includes(h));
 }
 function extractVoe(url) {
   return __async(this, null, function* () {
-    var _a;
-    try {
-      const origin = new URL(url).origin;
-      const html = yield fetchText(url, {
-        headers: {
-          "User-Agent": UA,
-          "Referer": origin + "/",
-          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    const mediaId = (url.match(/\/e\/([a-zA-Z0-9]+)/) || [])[1];
+    if (!mediaId)
+      return null;
+    const candidates = [url, ...VOE_UNPROTECTED_MIRRORS.map((h) => `https://${h}/e/${mediaId}`)];
+    for (const candidateUrl of candidates) {
+      try {
+        const origin = new URL(candidateUrl).origin;
+        const html = yield fetchText(candidateUrl, {
+          headers: {
+            "User-Agent": UA,
+            "Referer": candidateUrl,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+          }
+        });
+        if (html.includes("ddos-guard") || html.includes("DDoS-Guard")) {
+          continue;
         }
-      });
-      const hlsMatch = html.match(/['"]hls['"]\s*:\s*['"]([^'"]+)['"]/);
-      if (hlsMatch) {
-        return [{
-          name: "VOE",
-          title: "VOE",
-          url: hlsMatch[1],
-          quality: "auto",
-          headers: { "Referer": origin + "/", "User-Agent": UA }
-        }];
-      }
-      const sourcesMatch = html.match(/sources\s*:\s*\[\s*\{[^}]*?file\s*:\s*["']([^"']+)["']/);
-      if (sourcesMatch) {
-        return [{
-          name: "VOE",
-          title: "VOE",
-          url: sourcesMatch[1],
-          quality: "auto",
-          headers: { "Referer": origin + "/", "User-Agent": UA }
-        }];
-      }
-      const packedBlock = (_a = html.match(/\}\s*\('([^']+)',(\d+),(\d+),'([^']+)'\.split\('\|'\)/)) == null ? void 0 : _a[0];
-      if (packedBlock) {
-        const decoded = unpackJS(packedBlock);
-        if (decoded) {
-          const hlsInPacked = decoded.match(/['"]hls['"]\s*:\s*['"]([^'"]+\.m3u8[^'"]*)['"]/);
-          const fileInPacked = decoded.match(/file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/);
-          const m3u8InPacked = decoded.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/);
-          const videoUrl = (hlsInPacked == null ? void 0 : hlsInPacked[1]) || (fileInPacked == null ? void 0 : fileInPacked[1]) || (m3u8InPacked == null ? void 0 : m3u8InPacked[1]);
-          if (videoUrl) {
+        const jsRedirectMatch = html.match(/window\.location\.href\s*=\s*['"]([^'"]+)['"]/) || html.match(/location\.href\s*=\s*['"]([^'"]+)['"]/);
+        if (jsRedirectMatch) {
+          const nextUrl = jsRedirectMatch[1];
+          const nextOrigin = new URL(nextUrl).origin;
+          const nextHtml = yield fetchText(nextUrl, {
+            headers: {
+              "User-Agent": UA,
+              "Referer": candidateUrl,
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            }
+          });
+          if (nextHtml.includes("ddos-guard") || nextHtml.includes("DDoS-Guard"))
+            continue;
+          const jsonMatch2 = nextHtml.match(/<script type="application\/json">\["([^"]+)"\]<\/script>/);
+          if (jsonMatch2) {
+            const decoded = decodeVoe(jsonMatch2[1]);
+            if (decoded && decoded.source) {
+              return [{
+                name: "VOE",
+                title: "VOE",
+                url: decoded.source,
+                quality: decoded.quality || "auto",
+                headers: { "Referer": nextOrigin + "/", "User-Agent": UA }
+              }];
+            }
+          }
+        }
+        const jsonMatch = html.match(/<script type="application\/json">\["([^"]+)"\]<\/script>/);
+        if (jsonMatch) {
+          const decoded = decodeVoe(jsonMatch[1]);
+          if (decoded && decoded.source) {
             return [{
               name: "VOE",
               title: "VOE",
-              url: videoUrl,
-              quality: "auto",
+              url: decoded.source,
+              quality: decoded.quality || "auto",
               headers: { "Referer": origin + "/", "User-Agent": UA }
             }];
           }
         }
+        const hlsMatch = html.match(/['"]hls['"]\s*:\s*['"]([^'"]+)['"]/);
+        if (hlsMatch) {
+          return [{
+            name: "VOE",
+            title: "VOE",
+            url: hlsMatch[1],
+            quality: "auto",
+            headers: { "Referer": origin + "/", "User-Agent": UA }
+          }];
+        }
+        const packed = html.match(new RegExp("eval\\(function\\(p,a,c,k,e,[rd]\\).*?\\}\\(.*\\)\\)", "s"));
+        if (packed) {
+          const unpacked = unpackJS(packed[0]);
+          if (unpacked) {
+            const m3u8InPacked = unpacked.match(/['"]hls['"]\s*:\s*['"]([^'"]+\.m3u8[^'"]*)['"]/) || unpacked.match(/file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/) || unpacked.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/);
+            if (m3u8InPacked) {
+              return [{
+                name: "VOE",
+                title: "VOE",
+                url: m3u8InPacked[1],
+                quality: "auto",
+                headers: { "Referer": origin + "/", "User-Agent": UA }
+              }];
+            }
+          }
+        }
+      } catch (e) {
       }
-      const m3u8Match = html.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/);
-      if (m3u8Match) {
-        return [{
-          name: "VOE",
-          title: "VOE",
-          url: m3u8Match[1],
-          quality: "auto",
-          headers: { "Referer": origin + "/", "User-Agent": UA }
-        }];
-      }
-      return null;
-    } catch (e) {
-      return null;
     }
+    return null;
   });
 }
 var ALL_KNOWN_HOSTS = [
@@ -1109,11 +1215,35 @@ function isBlocked(title) {
   return BLOCKED_REGEX.test(title);
 }
 
+// src/shared/utils.js
+function cleanTitle(title) {
+  if (!title)
+    return "";
+  return title.toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim();
+}
+function isMatch(resultTitle, expectedTitle) {
+  if (!resultTitle || !expectedTitle)
+    return false;
+  const cleanResult = cleanTitle(resultTitle);
+  const cleanExpected = cleanTitle(expectedTitle);
+  if (cleanResult === cleanExpected)
+    return true;
+  if (cleanResult.includes(cleanExpected))
+    return true;
+  const expectedWords = cleanExpected.split(" ").filter((w) => w.length > 2);
+  if (expectedWords.length > 0) {
+    const allWordsPresent = expectedWords.every((word) => cleanResult.includes(word));
+    if (allWordsPresent)
+      return true;
+  }
+  return false;
+}
+
 // src/pornwatch/extractor.js
 var import_cheerio_without_node_native = __toESM(require("cheerio-without-node-native"));
 var BASE_URL = "https://pornwatch.ws";
 var NAV_PATHS = /\/(movies-2|xxxfree|most-viewed-2|most-rating-2|director|genre|casts|release-year|wp-|xmlrpc|wp-json|\?)/;
-function searchSite(query) {
+function searchSite(query, expectedTitle) {
   return __async(this, null, function* () {
     const url = `${BASE_URL}/?s=${encodeURIComponent(query)}`;
     const html = yield fetchText(url);
@@ -1124,8 +1254,10 @@ function searchSite(query) {
       const title = $(el).find("h2").text().trim() || $(el).find("h3").text().trim();
       const href = $(el).find("a").first().attr("href");
       if (title && href && !isBlocked(title) && !seen.has(href)) {
-        seen.add(href);
-        results.push({ title, href });
+        if (isMatch(title, expectedTitle)) {
+          seen.add(href);
+          results.push({ title, href });
+        }
       }
     });
     if (!results.length) {
@@ -1133,8 +1265,10 @@ function searchSite(query) {
         const title = $(el).find("h2, h3, .title").first().text().trim();
         const href = $(el).find("a").first().attr("href");
         if (title && href && href.startsWith("http") && !isBlocked(title) && !seen.has(href)) {
-          seen.add(href);
-          results.push({ title, href });
+          if (isMatch(title, expectedTitle)) {
+            seen.add(href);
+            results.push({ title, href });
+          }
         }
       });
     }
@@ -1144,8 +1278,10 @@ function searchSite(query) {
         if (href.startsWith(BASE_URL + "/") && !NAV_PATHS.test(href) && !seen.has(href)) {
           const title = $(el).attr("title") || $(el).text().trim();
           if (title && !isBlocked(title)) {
-            seen.add(href);
-            results.push({ title, href });
+            if (isMatch(title, expectedTitle)) {
+              seen.add(href);
+              results.push({ title, href });
+            }
           }
         }
       });
@@ -1198,9 +1334,9 @@ function getVideoLinks(pageUrl) {
 }
 function extractStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
-    const title = yield getTitleFromTmdb(tmdbId, mediaType);
-    const query = title || String(tmdbId);
-    const results = yield searchSite(query);
+    const metadata = yield resolveMetadata(tmdbId, mediaType);
+    const query = metadata.title || String(tmdbId);
+    const results = yield searchSite(query, metadata.title);
     if (!results.length)
       return [];
     const streams = [];

@@ -1,6 +1,7 @@
-import { fetchText, getTitleFromTmdb } from '../shared/http.js';
+import { fetchText, resolveMetadata } from '../shared/http.js';
 import { extractFromUrl, isKnownEmbedHost } from '../shared/extractors.js';
 import { isBlocked } from '../shared/filters.js';
+import { isMatch } from '../shared/utils.js';
 import cheerio from 'cheerio-without-node-native';
 
 const BASE_URL = 'https://pornwatch.ws';
@@ -8,7 +9,7 @@ const BASE_URL = 'https://pornwatch.ws';
 // Paths that are nav/meta links and NOT movie pages
 const NAV_PATHS = /\/(movies-2|xxxfree|most-viewed-2|most-rating-2|director|genre|casts|release-year|wp-|xmlrpc|wp-json|\?)/ ;
 
-async function searchSite(query) {
+async function searchSite(query, expectedTitle) {
     const url = `${BASE_URL}/?s=${encodeURIComponent(query)}`;
     const html = await fetchText(url);
     const $ = cheerio.load(html);
@@ -20,8 +21,10 @@ async function searchSite(query) {
         const title = $(el).find('h2').text().trim() || $(el).find('h3').text().trim();
         const href = $(el).find('a').first().attr('href');
         if (title && href && !isBlocked(title) && !seen.has(href)) {
-            seen.add(href);
-            results.push({ title, href });
+            if (isMatch(title, expectedTitle)) {
+                seen.add(href);
+                results.push({ title, href });
+            }
         }
     });
 
@@ -31,8 +34,10 @@ async function searchSite(query) {
             const title = $(el).find('h2, h3, .title').first().text().trim();
             const href = $(el).find('a').first().attr('href');
             if (title && href && href.startsWith('http') && !isBlocked(title) && !seen.has(href)) {
-                seen.add(href);
-                results.push({ title, href });
+                if (isMatch(title, expectedTitle)) {
+                    seen.add(href);
+                    results.push({ title, href });
+                }
             }
         });
     }
@@ -48,8 +53,10 @@ async function searchSite(query) {
             ) {
                 const title = $(el).attr('title') || $(el).text().trim();
                 if (title && !isBlocked(title)) {
-                    seen.add(href);
-                    results.push({ title, href });
+                    if (isMatch(title, expectedTitle)) {
+                        seen.add(href);
+                        results.push({ title, href });
+                    }
                 }
             }
         });
@@ -105,10 +112,10 @@ async function getVideoLinks(pageUrl) {
 }
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {
-    const title = await getTitleFromTmdb(tmdbId, mediaType);
-    const query = title || String(tmdbId);
+    const metadata = await resolveMetadata(tmdbId, mediaType);
+    const query = metadata.title || String(tmdbId);
 
-    const results = await searchSite(query);
+    const results = await searchSite(query, metadata.title);
     if (!results.length) return [];
 
     const streams = [];
