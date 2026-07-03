@@ -1,121 +1,122 @@
-// src/shared/http.js
+export const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0";
 
-const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0";
-const HEADERS = { "User-Agent": UA };
-const DEFAULT_TIMEOUT_MS = 10000;
+export const HEADERS = {
+    "User-Agent": UA,
+};
+
+export async function fetchText(url, options = {}) {
+    const response = await fetch(url, {
+        headers: { ...HEADERS, ...options.headers },
+        ...options,
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
+    return response.text();
+}
+
+export async function fetchJson(url, options = {}) {
+    const raw = await fetchText(url, options);
+    return JSON.parse(raw);
+}
 
 const TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 const TMDB_BASE_URL = "https://api.themoviedb.org/3";
 
-async function fetchWithRetry(url, options = {}, retries = 3) {
-  const controller = new AbortController();
-  const { timeout, signal: _ignored, headers: optHeaders, ...restOpts } = options;
-  const timer = setTimeout(() => controller.abort(), timeout || DEFAULT_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(url, {
-      ...restOpts,
-      headers: { ...HEADERS, ...optHeaders },
-      signal: controller.signal
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
-    return response;
-  } catch (e) {
-    if (retries > 0 && (e.name === 'AbortError' || e.message.includes('HTTP 429'))) {
-      await new Promise(r => setTimeout(r, 1000 * (4 - retries)));
-      return fetchWithRetry(url, options, retries - 1);
-    }
-    throw e;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function fetchText(url, options = {}) {
-  const response = await fetchWithRetry(url, options);
-  return response.text();
-}
-
-async function fetchJson(url, options = {}) {
-  const raw = await fetchText(url, options);
-  return JSON.parse(raw);
-}
-
-async function getTitleFromTmdb(tmdbId, mediaType) {
-  if (!tmdbId) return null;
-
-  const types = mediaType === "tv" ? ["tv", "movie"] : ["movie", "tv"];
-
-  for (const type of types) {
+export async function getTitleFromTmdb(tmdbId, mediaType) {
     try {
-      const url = `${TMDB_BASE_URL}/${type}/${tmdbId}?language=en-US&api_key=${TMDB_API_KEY}&include_adult=true`;
-      const res = await fetchWithRetry(url, { timeout: 8000 }, 2);
-      const data = await res.json();
-      const title = data.title || data.name || null;
-      if (title) return { title, type, data };
-    } catch (e) {
-      // Continue to next type
+        const endpoint = mediaType === "tv"
+            ? `${TMDB_BASE_URL}/tv/${tmdbId}`
+            : `${TMDB_BASE_URL}/movie/${tmdbId}`;
+        const res = await fetch(`${endpoint}?language=en-US&api_key=${TMDB_API_KEY}&include_adult=true`);
+        if (!res.ok) return null;
+        const data = await res.json();
+        return data.title || data.name || null;
+    } catch {
+        return null;
     }
-  }
-  return null;
 }
 
-async function resolveMetadata(id, mediaType) {
-  if (!id) return { title: null, id: null };
+// ──────────────────────────────────────────────────────────────────────
+// FUZZY TITLE MATCHING UTILITIES
+// ──────────────────────────────────────────────────────────────────────
 
-  const idStr = String(id);
-
-  if (idStr.startsWith("tt")) {
-    try {
-      const url = `${TMDB_BASE_URL}/find/${idStr}?external_source=imdb_id&api_key=${TMDB_API_KEY}&include_adult=true`;
-      const res = await fetchWithRetry(url, { timeout: 8000 }, 2);
-      const data = await res.json();
-
-      const movieResults = data.movie_results || [];
-      const tvResults = data.tv_results || [];
-
-      if (mediaType === "tv" && tvResults.length > 0) {
-        const tv = tvResults[0];
-        return { title: tv.name, id: tv.id, type: "tv" };
-      }
-      if (movieResults.length > 0) {
-        const movie = movieResults[0];
-        return { title: movie.title, id: movie.id, type: "movie" };
-      }
-      if (tvResults.length > 0) {
-        const tv = tvResults[0];
-        return { title: tv.name, id: tv.id, type: "tv" };
-      }
-
-      return { title: idStr, id: idStr, type: mediaType || "movie" };
-    } catch (e) {
-      return { title: idStr, id: idStr, type: mediaType || "movie" };
-    }
-  }
-
-  if (idStr.startsWith("tmdb:")) {
-    const parts = idStr.split(":");
-    let tmdbId = parts[parts.length - 1];
-    let type = mediaType;
-
-    if (parts.length >= 3) {
-      type = parts[1];
-    }
-
-    const result = await getTitleFromTmdb(tmdbId, type);
-    if (result) {
-      return { title: result.title, id: tmdbId, type: result.type };
-    }
-    return { title: null, id: tmdbId, type: type || "movie" };
-  }
-
-  const result = await getTitleFromTmdb(idStr, mediaType);
-  if (result) {
-    return { title: result.title, id: idStr, type: result.type };
-  }
-  return { title: null, id: idStr, type: mediaType || "movie" };
+function normalizeTitle(title) {
+    if (!title) return '';
+    return title
+        .toLowerCase()
+        .replace(/\(\d{4}\)/g, '')
+        .replace(/\[.*?\]/g, '')
+        .replace(/\(.*?\)/g, '')
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { fetchText, fetchJson, getTitleFromTmdb, resolveMetadata, TMDB_API_KEY, TMDB_BASE_URL };
+function wordOverlapScore(titleA, titleB) {
+    const wordsA = new Set(normalizeTitle(titleA).split(' ').filter(w => w.length > 2));
+    const wordsB = new Set(normalizeTitle(titleB).split(' ').filter(w => w.length > 2));
+    if (wordsA.size === 0 || wordsB.size === 0) return 0;
+    let intersection = 0;
+    for (const word of wordsA) {
+        if (wordsB.has(word)) intersection++;
+    }
+    const union = new Set([...wordsA, ...wordsB]).size;
+    return intersection / union;
+}
+
+function containsAllWords(shorter, longer) {
+    const shortWords = normalizeTitle(shorter).split(' ').filter(w => w.length > 2);
+    const longWords = new Set(normalizeTitle(longer).split(' ').filter(w => w.length > 2));
+    if (shortWords.length === 0) return false;
+    return shortWords.every(w => longWords.has(w));
+}
+
+export function findBestMatch(tmdbTitle, searchResults, threshold = 0.5) {
+    if (!tmdbTitle || !searchResults || searchResults.length === 0) return null;
+    let best = null;
+    let bestScore = -1;
+    const normTmdb = normalizeTitle(tmdbTitle);
+    for (const result of searchResults) {
+        const siteTitle = result.title || '';
+        const normSite = normalizeTitle(siteTitle);
+        if (normTmdb === normSite) {
+            return { result, score: 1.0 };
+        }
+        const overlap = wordOverlapScore(tmdbTitle, siteTitle);
+        const contained = containsAllWords(tmdbTitle, siteTitle);
+        const reverseContained = containsAllWords(siteTitle, tmdbTitle);
+        let score = overlap;
+        if (contained) score += 0.15;
+        if (reverseContained) score += 0.1;
+        if (score > bestScore) {
+            bestScore = score;
+            best = result;
+        }
+    }
+    if (bestScore >= threshold) {
+        return { result: best, score: bestScore };
+    }
+    return null;
+}
+
+export function generateQueryVariants(title) {
+    if (!title) return [];
+    const variants = [title];
+    const colonIdx = title.indexOf(':');
+    if (colonIdx > 0) {
+        variants.push(title.substring(0, colonIdx).trim());
+    }
+    const yearMatch = title.match(/^(.*?)(\s*\(\d{4}\))?$/);
+    if (yearMatch && yearMatch[1].trim() !== title) {
+        variants.push(yearMatch[1].trim());
+    }
+    const suffixes = ['hd', 'full movie', 'watch online', 'free', 'xxx', 'parody'];
+    let cleaned = title.toLowerCase();
+    for (const suffix of suffixes) {
+        cleaned = cleaned.replace(new RegExp(`\s*${suffix}\s*`, 'gi'), ' ');
+    }
+    cleaned = cleaned.trim();
+    if (cleaned !== title.toLowerCase().trim() && cleaned.length > 3) {
+        variants.push(cleaned);
+    }
+    return [...new Set(variants)];
 }
