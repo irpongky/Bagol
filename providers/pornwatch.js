@@ -1357,10 +1357,14 @@ function extractStreams(tmdbId, mediaType, season, episode) {
       return [];
     let bestResult = null;
     if (tmdbTitle) {
-      const match = findBestMatch(tmdbTitle, allResults, 0.4);
+      const match = allResults.find(result => {
+        const refTitle = tmdbTitle.toLowerCase();
+        const mirrorTitle = result.title.toLowerCase();
+        return refTitle.includes(mirrorTitle) || mirrorTitle.includes(refTitle);
+      });
       if (match) {
-        bestResult = match.result;
-        console.log(`[PornWatch] Best match: "${bestResult.title}" (score: ${match.score.toFixed(2)})`);
+        bestResult = match;
+        console.log(`[Pornwatch] Best match: "${bestResult.title}"`);
       }
     }
     if (!bestResult) {
