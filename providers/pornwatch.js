@@ -1264,7 +1264,7 @@ function formatTooltip(meta, siteName, res) {
     genreLine,
     directorLine,
     castLine,
-    `\u2705 Verified`
+    `\u2705 Verified │ ✍️ @Pongky.Ir`
   ].filter(Boolean);
   return descParts.join("\n");
 }
