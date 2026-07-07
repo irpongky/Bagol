@@ -41,19 +41,30 @@ export async function getTitleFromTmdb(tmdbId, mediaType) {
 
 function normalizeTitle(title) {
     if (!title) return '';
+    const noiseWords = ['vol', 'volume', 'part', 'season', 's', 'the'];
     return title
         .toLowerCase()
+        .replace(/([a-z])([0-9])/g, '$1 $2')
+        .replace(/([0-9])([a-z])/g, '$1 $2')
         .replace(/\(\d{4}\)/g, '')
         .replace(/\[.*?\]/g, '')
         .replace(/\(.*?\)/g, '')
         .replace(/[^a-z0-9\s]/g, ' ')
-        .replace(/\s+/g, ' ')
+        .split(/\s+/)
+        .filter(word => word && !noiseWords.includes(word))
+        .join(' ')
         .trim();
 }
 
+function getNumbers(title) {
+    const norm = normalizeTitle(title);
+    return new Set(norm.split(' ').filter(w => /^\d+$/.test(w)));
+}
+
 function wordOverlapScore(titleA, titleB) {
-    const wordsA = new Set(normalizeTitle(titleA).split(' ').filter(w => w.length > 2));
-    const wordsB = new Set(normalizeTitle(titleB).split(' ').filter(w => w.length > 2));
+    const isNum = (w) => /^\d+$/.test(w);
+    const wordsA = new Set(normalizeTitle(titleA).split(' ').filter(w => w.length > 2 || isNum(w)));
+    const wordsB = new Set(normalizeTitle(titleB).split(' ').filter(w => w.length > 2 || isNum(w)));
     if (wordsA.size === 0 || wordsB.size === 0) return 0;
     let intersection = 0;
     for (const word of wordsA) {
@@ -63,30 +74,29 @@ function wordOverlapScore(titleA, titleB) {
     return intersection / union;
 }
 
-function containsAllWords(shorter, longer) {
-    const shortWords = normalizeTitle(shorter).split(' ').filter(w => w.length > 2);
-    const longWords = new Set(normalizeTitle(longer).split(' ').filter(w => w.length > 2));
-    if (shortWords.length === 0) return false;
-    return shortWords.every(w => longWords.has(w));
-}
-
 export function findBestMatch(tmdbTitle, searchResults, threshold = 0.5) {
     if (!tmdbTitle || !searchResults || searchResults.length === 0) return null;
     let best = null;
     let bestScore = -1;
     const normTmdb = normalizeTitle(tmdbTitle);
+    const tmdbNums = getNumbers(tmdbTitle);
+    
     for (const result of searchResults) {
         const siteTitle = result.title || '';
         const normSite = normalizeTitle(siteTitle);
-        if (normTmdb === normSite) {
-            return { result, score: 1.0 };
+        if (normTmdb === normSite) return { result, score: 1.0 };
+        
+        const siteNums = getNumbers(siteTitle);
+        let numMismatch = false;
+        if (tmdbNums.size > 0 && siteNums.size > 0) {
+            const intersect = new Set([...tmdbNums].filter(n => siteNums.has(n)));
+            if (intersect.size === 0) numMismatch = true;
         }
+
         const overlap = wordOverlapScore(tmdbTitle, siteTitle);
-        const contained = containsAllWords(tmdbTitle, siteTitle);
-        const reverseContained = containsAllWords(siteTitle, tmdbTitle);
         let score = overlap;
-        if (contained) score += 0.15;
-        if (reverseContained) score += 0.1;
+        if (numMismatch) score -= 0.3;
+        
         if (score > bestScore) {
             bestScore = score;
             best = result;
