@@ -34,3 +34,44 @@ export function isMatch(resultTitle, expectedTitle) {
     
     return false;
 }
+
+/**
+ * Formats a stream label for consistent display.
+ */
+export function formatStreamLabel(siteName, providerName, quality) {
+    const res = quality ? quality.toUpperCase() : 'AUTO';
+    return `${res} • ${siteName} • ${providerName}`;
+}
+
+/**
+ * Constructs a DLE-style tooltip string from metadata.
+ */
+export function formatTooltip(meta, siteName, res) {
+    if (!meta || !meta.tmdb) return null;
+
+    const { tmdb } = meta;
+    const titleLine = tmdb.title || '';
+    const runtimeLine = tmdb.runtime ? `⏱️ ${tmdb.runtime} min` : '';
+    const directorLine = tmdb.director && tmdb.director[0] ? `🎬 ${tmdb.director[0].name}` : '';
+    const castLine = tmdb.cast && tmdb.cast.length > 0 ? `👥 ${tmdb.cast.map(c => c.name).join(', ')}` : '';
+    const genreLine = tmdb.genres && tmdb.genres.length > 0 ? `🎭 ${tmdb.genres.join(', ')}` : '';
+    
+    const adultLabels = [];
+    if (tmdb.adult) adultLabels.push('adult:true');
+    if (tmdb.rated) adultLabels.push(`rated:${tmdb.rated}`);
+    if (adultLabels.length === 0) adultLabels.push('adult:true');
+    const warningLine = `🔞 ${adultLabels.join(' │ ')}`;
+
+    const descParts = [
+        titleLine,
+        `${res.toUpperCase()} ${runtimeLine ? ' │ ' + runtimeLine : ''}`,
+        `🌐 Source: ${siteName}`,
+        warningLine,
+        genreLine,
+        directorLine,
+        castLine,
+        `✅ Verified`
+    ].filter(Boolean);
+
+    return descParts.join('\n');
+}

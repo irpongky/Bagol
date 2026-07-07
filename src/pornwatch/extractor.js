@@ -1,6 +1,7 @@
-import { fetchText, getTitleFromTmdb, findBestMatch, generateQueryVariants } from '../shared/http.js';
+import { fetchText, getTmdbMetadata, findBestMatch, generateQueryVariants } from '../shared/http.js';
 import { extractFromUrl, isKnownEmbedHost } from '../shared/extractors.js';
 import { isBlocked } from '../shared/filters.js';
+import { formatStreamLabel, formatTooltip } from '../shared/utils.js';
 import cheerio from 'cheerio-without-node-native';
 
 const BASE_URL = 'https://pornwatch.ws';
@@ -68,9 +69,10 @@ async function getVideoLinks(pageUrl) {
 }
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {
-    const tmdbTitle = await getTitleFromTmdb(tmdbId, mediaType);
+    const meta = await getTmdbMetadata(tmdbId, mediaType);
+    const tmdbTitle = meta?.tmdb?.title || String(tmdbId);
 
-    const queries = generateQueryVariants(tmdbTitle || String(tmdbId));
+    const queries = generateQueryVariants(tmdbTitle);
 
     let allResults = [];
 
@@ -107,7 +109,8 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
         if (extracted) {
             streams.push(...extracted.map(s => ({
                 ...s,
-                title: `[PornWatch] ${s.title}`
+                name: formatStreamLabel('PornWatch', s.name, s.quality),
+                title: formatTooltip(meta, 'PornWatch', s.quality) || `[PornWatch] ${s.title}`
             })));
         }
     }

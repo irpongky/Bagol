@@ -35,6 +35,36 @@ export async function getTitleFromTmdb(tmdbId, mediaType) {
     }
 }
 
+export async function getTmdbMetadata(tmdbId, mediaType) {
+    try {
+        const endpoint = mediaType === "tv"
+            ? `${TMDB_BASE_URL}/tv/${tmdbId}`
+            : `${TMDB_BASE_URL}/movie/${tmdbId}`;
+        const res = await fetch(`${endpoint}?append_to_response=credits&language=en-US&api_key=${TMDB_API_KEY}&include_adult=true`);
+        if (!res.ok) return null;
+        const data = await res.json();
+        
+        const director = mediaType === 'movie' 
+            ? (data.credits?.crew?.filter(c => c.job === 'Director') || [])
+            : (data.created_by || []);
+            
+        return {
+            tmdb: {
+                title: data.title || data.name,
+                runtime: data.runtime || data.episode_run_time?.[0],
+                genres: data.genres?.map(g => g.name) || [],
+                cast: data.credits?.cast?.slice(0, 3) || [],
+                director: director,
+                adult: data.adult,
+                rated: data.release_dates?.results?.find(r => r.iso_3166_1 === 'US')?.release_dates?.[0]?.certification
+            },
+            enrichment: {} // Placeholder if needed
+        };
+    } catch {
+        return null;
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // FUZZY TITLE MATCHING UTILITIES
 // ──────────────────────────────────────────────────────────────────────
