@@ -76,25 +76,24 @@ async function getVideoLinks(pageUrl) {
 export async function extractStreams(tmdbId, mediaType, season, episode) {
     const meta = await getTmdbMetadata(tmdbId, mediaType);
     const tmdbTitle = meta?.tmdb?.title || String(tmdbId);
+    const referenceYear = meta?.tmdb?.year;
 
     const queries = generateQueryVariants(tmdbTitle);
 
-    let allResults = [];
+    // PARALLEL SEARCH for all query variants
+    const searchPromises = queries.map(q => searchSite(q).catch(() => []));
+    const allSearchResults = await Promise.all(searchPromises);
+    const allResults = [].concat(...allSearchResults);
 
-    for (const query of queries) {
-        const results = await searchSite(query);
-        if (results.length) {
-            allResults = results;
-            break;
-        }
-    }
+    // Deduplicate results by href before matching
+    const uniqueResults = Array.from(new Map(allResults.map(r => [r.href, r])).values());
 
-    if (!allResults.length) return [];
+    if (!uniqueResults.length) return [];
 
     let bestResult = null;
 
     if (tmdbTitle) {
-        const match = findBestMatch(tmdbTitle, allResults, 0.4);
+        const match = findBestMatch(tmdbTitle, uniqueResults, 0.4, referenceYear);
         if (match) {
             bestResult = match.result;
             console.log(`[Mangoporn] Best match: "${bestResult.title}" (score: ${match.score.toFixed(2)})`);
@@ -102,23 +101,29 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     }
 
     if (!bestResult) {
-        bestResult = allResults[0];
-        console.log(`[Mangoporn] Fallback to first result: "${bestResult.title}"`);
+        console.log(`[Mangoporn] No accurate match found for "${tmdbTitle}". Skipping to prevent mismatch.`);
+        return [];
     }
 
     const videoLinks = await getVideoLinks(bestResult.href);
-    const streams = [];
-
-    for (const link of videoLinks) {
-        const extracted = await extractFromUrl(link, BASE_URL + '/');
-        if (extracted) {
-            streams.push(...extracted.map(s => ({
-                ...s,
-                name: formatStreamLabel('Mangoporn', s.name, s.quality),
-                title: formatTooltip(meta, 'Mangoporn', s.quality) || `[Mangoporn] ${s.title}`
-            })));
+    
+    // PARALLEL EXTRACTION for all video links
+    const streamPromises = videoLinks.map(async (link) => {
+        try {
+            const extracted = await extractFromUrl(link, BASE_URL + '/');
+            if (extracted) {
+                return extracted.map(s => ({
+                    ...s,
+                    name: formatStreamLabel('Mangoporn', s.name, s.quality),
+                    title: formatTooltip(meta, 'Mangoporn', s.quality) || `[Mangoporn] ${s.title}`
+                }));
+            }
+        } catch (e) {
+            // Silently ignore extraction errors
         }
-    }
+        return [];
+    });
 
-    return streams;
+    const nestedStreams = await Promise.all(streamPromises);
+    return [].concat(...nestedStreams);
 }

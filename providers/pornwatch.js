@@ -94,6 +94,7 @@ function getTmdbMetadata(tmdbId, mediaType) {
       return {
         tmdb: {
           title: data.title || data.name,
+          year: (data.release_date || data.first_air_date || "").split("-")[0],
           runtime: data.runtime || ((_c = data.episode_run_time) == null ? void 0 : _c[0]),
           genres: ((_d = data.genres) == null ? void 0 : _d.map((g) => g.name)) || [],
           cast: ((_f = (_e = data.credits) == null ? void 0 : _e.cast) == null ? void 0 : _f.slice(0, 3)) || [],
@@ -112,8 +113,8 @@ function getTmdbMetadata(tmdbId, mediaType) {
 function normalizeTitle(title) {
   if (!title)
     return "";
-  const noiseWords = ["vol", "volume", "part", "season", "s", "the"];
-  return title.toLowerCase().replace(/([a-z])([0-9])/g, "$1 $2").replace(/([0-9])([a-z])/g, "$1 $2").replace(/\(\d{4}\)/g, "").replace(/\[.*?\]/g, "").replace(/\(.*?\)/g, "").replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((word) => word && !noiseWords.includes(word)).join(" ").trim();
+  const noiseWords = ["vol", "volume", "part", "season", "s", "and", "the", "a", "an"];
+  return title.toLowerCase().replace(/([a-z])([0-9])/g, "$1 $2").replace(/([0-9])([a-z])/g, "$1 $2").replace(/\[.*?\]/g, "").replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((word) => word && !noiseWords.includes(word)).join(" ").trim();
 }
 function getNumbers(title) {
   const norm = normalizeTitle(title);
@@ -133,7 +134,7 @@ function wordOverlapScore(titleA, titleB) {
   const union = (/* @__PURE__ */ new Set([...wordsA, ...wordsB])).size;
   return intersection / union;
 }
-function findBestMatch(tmdbTitle, searchResults, threshold = 0.5) {
+function findBestMatch(tmdbTitle, searchResults, threshold = 0.5, referenceYear = null) {
   if (!tmdbTitle || !searchResults || searchResults.length === 0)
     return null;
   let best = null;
@@ -143,6 +144,12 @@ function findBestMatch(tmdbTitle, searchResults, threshold = 0.5) {
   for (const result of searchResults) {
     const siteTitle = result.title || "";
     const normSite = normalizeTitle(siteTitle);
+    if (referenceYear) {
+      const yearInSite = siteTitle.match(/\b(19|20)\d{2}\b/);
+      if (yearInSite && yearInSite[0] !== String(referenceYear)) {
+        continue;
+      }
+    }
     if (normTmdb === normSite)
       return { result, score: 1 };
     const siteNums = getNumbers(siteTitle);
@@ -174,20 +181,20 @@ function generateQueryVariants(title) {
   if (colonIdx > 0) {
     variants.push(title.substring(0, colonIdx).trim());
   }
-  const yearMatch = title.match(/^(.*?)(\s*\(\d{4}\))?$/);
-  if (yearMatch && yearMatch[1].trim() !== title) {
-    variants.push(yearMatch[1].trim());
-  }
-  const suffixes = ["hd", "full movie", "watch online", "free", "xxx", "parody"];
-  let cleaned = title.toLowerCase();
-  for (const suffix of suffixes) {
-    cleaned = cleaned.replace(new RegExp(`s*${suffix}s*`, "gi"), " ");
-  }
-  cleaned = cleaned.trim();
-  if (cleaned !== title.toLowerCase().trim() && cleaned.length > 3) {
+  const cleaned = title.replace(/\s*\(\d{4}\)/g, "").trim();
+  if (cleaned !== title)
     variants.push(cleaned);
+  const suffixes = ["hd", "full movie", "watch online", "free", "xxx", "parody"];
+  let slug = cleaned.toLowerCase();
+  for (const suffix of suffixes) {
+    slug = slug.replace(new RegExp(`\\s*${suffix}\\s*`, "gi"), " ");
   }
-  return [...new Set(variants)];
+  slug = slug.trim();
+  if (slug !== cleaned.toLowerCase() && slug.length > 3) {
+    variants.push(slug);
+  }
+  variants.push(cleaned.replace(/\s+/g, "-"));
+  return [...new Set(variants.filter((v) => v.length >= 3))];
 }
 
 // src/shared/extractors.js
@@ -1264,7 +1271,7 @@ function formatTooltip(meta, siteName, res) {
     genreLine,
     directorLine,
     castLine,
-    `\u2705 Verified │ ✍️ @Pongky.Ir`
+    `\u2705 Verified`
   ].filter(Boolean);
   return descParts.join("\n");
 }
@@ -1341,48 +1348,45 @@ function getVideoLinks(pageUrl) {
 }
 function extractStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
-    var _a;
+    var _a, _b;
     const meta = yield getTmdbMetadata(tmdbId, mediaType);
     const tmdbTitle = ((_a = meta == null ? void 0 : meta.tmdb) == null ? void 0 : _a.title) || String(tmdbId);
+    const referenceYear = (_b = meta == null ? void 0 : meta.tmdb) == null ? void 0 : _b.year;
     const queries = generateQueryVariants(tmdbTitle);
-    let allResults = [];
-    for (const query of queries) {
-      const results = yield searchSite(query);
-      if (results.length) {
-        allResults = results;
-        break;
-      }
-    }
-    if (!allResults.length)
+    const searchPromises = queries.map((q) => searchSite(q).catch(() => []));
+    const allSearchResults = yield Promise.all(searchPromises);
+    const allResults = [].concat(...allSearchResults);
+    const uniqueResults = Array.from(new Map(allResults.map((r) => [r.href, r])).values());
+    if (!uniqueResults.length)
       return [];
     let bestResult = null;
     if (tmdbTitle) {
-      const match = allResults.find(result => {
-        const refTitle = tmdbTitle.toLowerCase();
-        const mirrorTitle = result.title.toLowerCase();
-        return refTitle.includes(mirrorTitle) || mirrorTitle.includes(refTitle);
-      });
+      const match = findBestMatch(tmdbTitle, uniqueResults, 0.4, referenceYear);
       if (match) {
-        bestResult = match;
-        console.log(`[Pornwatch] Best match: "${bestResult.title}"`);
+        bestResult = match.result;
+        console.log(`[PornWatch] Best match: "${bestResult.title}" (score: ${match.score.toFixed(2)})`);
       }
     }
     if (!bestResult) {
-      bestResult = allResults[0];
-      console.log(`[PornWatch] Fallback to first result: "${bestResult.title}"`);
+      console.log(`[PornWatch] No accurate match found for "${tmdbTitle}". Skipping to prevent mismatch.`);
+      return [];
     }
     const videoLinks = yield getVideoLinks(bestResult.href);
-    const streams = [];
-    for (const link of videoLinks) {
-      const extracted = yield extractFromUrl(link, BASE_URL + "/");
-      if (extracted) {
-        streams.push(...extracted.map((s) => __spreadProps(__spreadValues({}, s), {
-          name: formatStreamLabel("PornWatch", s.name, s.quality),
-          title: formatTooltip(meta, "PornWatch", s.quality) || `[PornWatch] ${s.title}`
-        })));
+    const streamPromises = videoLinks.map((link) => __async(this, null, function* () {
+      try {
+        const extracted = yield extractFromUrl(link, BASE_URL + "/");
+        if (extracted) {
+          return extracted.map((s) => __spreadProps(__spreadValues({}, s), {
+            name: formatStreamLabel("PornWatch", s.name, s.quality),
+            title: formatTooltip(meta, "PornWatch", s.quality) || `[PornWatch] ${s.title}`
+          }));
+        }
+      } catch (e) {
       }
-    }
-    return streams;
+      return [];
+    }));
+    const nestedStreams = yield Promise.all(streamPromises);
+    return [].concat(...nestedStreams);
   });
 }
 

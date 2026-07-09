@@ -51,6 +51,7 @@ export async function getTmdbMetadata(tmdbId, mediaType) {
         return {
             tmdb: {
                 title: data.title || data.name,
+                year: (data.release_date || data.first_air_date || '').split('-')[0],
                 runtime: data.runtime || data.episode_run_time?.[0],
                 genres: data.genres?.map(g => g.name) || [],
                 cast: data.credits?.cast?.slice(0, 3) || [],
@@ -71,14 +72,13 @@ export async function getTmdbMetadata(tmdbId, mediaType) {
 
 function normalizeTitle(title) {
     if (!title) return '';
-    const noiseWords = ['vol', 'volume', 'part', 'season', 's', 'the'];
+    const noiseWords = ['vol', 'volume', 'part', 'season', 's', 'and', 'the', 'a', 'an'];
     return title
         .toLowerCase()
         .replace(/([a-z])([0-9])/g, '$1 $2')
         .replace(/([0-9])([a-z])/g, '$1 $2')
-        .replace(/\(\d{4}\)/g, '')
+        // DONT remove year anymore, we need it for verification
         .replace(/\[.*?\]/g, '')
-        .replace(/\(.*?\)/g, '')
         .replace(/[^a-z0-9\s]/g, ' ')
         .split(/\s+/)
         .filter(word => word && !noiseWords.includes(word))
@@ -104,7 +104,7 @@ function wordOverlapScore(titleA, titleB) {
     return intersection / union;
 }
 
-export function findBestMatch(tmdbTitle, searchResults, threshold = 0.5) {
+export function findBestMatch(tmdbTitle, searchResults, threshold = 0.5, referenceYear = null) {
     if (!tmdbTitle || !searchResults || searchResults.length === 0) return null;
     let best = null;
     let bestScore = -1;
@@ -114,6 +114,15 @@ export function findBestMatch(tmdbTitle, searchResults, threshold = 0.5) {
     for (const result of searchResults) {
         const siteTitle = result.title || '';
         const normSite = normalizeTitle(siteTitle);
+        
+        // 1. STRICT YEAR VERIFICATION
+        if (referenceYear) {
+            const yearInSite = siteTitle.match(/\b(19|20)\d{2}\b/);
+            if (yearInSite && yearInSite[0] !== String(referenceYear)) {
+                continue; // Wrong year, discard
+            }
+        }
+
         if (normTmdb === normSite) return { result, score: 1.0 };
         
         const siteNums = getNumbers(siteTitle);
@@ -145,18 +154,23 @@ export function generateQueryVariants(title) {
     if (colonIdx > 0) {
         variants.push(title.substring(0, colonIdx).trim());
     }
-    const yearMatch = title.match(/^(.*?)(\s*\(\d{4}\))?$/);
-    if (yearMatch && yearMatch[1].trim() !== title) {
-        variants.push(yearMatch[1].trim());
-    }
+    
+    // Clean year for search query
+    const cleaned = title.replace(/\s*\(\d{4}\)/g, '').trim();
+    if (cleaned !== title) variants.push(cleaned);
+
     const suffixes = ['hd', 'full movie', 'watch online', 'free', 'xxx', 'parody'];
-    let cleaned = title.toLowerCase();
+    let slug = cleaned.toLowerCase();
     for (const suffix of suffixes) {
-        cleaned = cleaned.replace(new RegExp(`\s*${suffix}\s*`, 'gi'), ' ');
+        slug = slug.replace(new RegExp(`\\s*${suffix}\\s*`, 'gi'), ' ');
     }
-    cleaned = cleaned.trim();
-    if (cleaned !== title.toLowerCase().trim() && cleaned.length > 3) {
-        variants.push(cleaned);
+    slug = slug.trim();
+    if (slug !== cleaned.toLowerCase() && slug.length > 3) {
+        variants.push(slug);
     }
-    return [...new Set(variants)];
+    
+    // Add variations for common separators
+    variants.push(cleaned.replace(/\s+/g, '-'));
+    
+    return [...new Set(variants.filter(v => v.length >= 3))];
 }
