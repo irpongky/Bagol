@@ -80,6 +80,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     const meta = await getTmdbMetadata(tmdbId, mediaType);
     const tmdbTitle = meta?.tmdb?.title || String(tmdbId);
     const referenceYear = meta?.tmdb?.year;
+    const altTitles = meta?.tmdb?.altTitles || [];
 
     const queries = generateQueryVariants(tmdbTitle);
 
@@ -96,15 +97,15 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     let bestResult = null;
 
     if (tmdbTitle) {
-        const match = findBestMatch(tmdbTitle, uniqueResults, 0.55, referenceYear);
+        const match = findBestMatch(tmdbTitle, uniqueResults, referenceYear, altTitles);
         if (match) {
             bestResult = match.result;
-            console.log(`[XXXParodyHD] Best match: "${bestResult.title}" (score: ${match.score.toFixed(2)})`);
+            console.log(`[XXXParodyHD] Match: "${bestResult.title}"`);
         }
     }
 
     if (!bestResult) {
-        console.log(`[XXXParodyHD] No accurate match found for "${tmdbTitle}". Skipping to prevent mismatch.`);
+        console.log(`[XXXParodyHD] No match for "${tmdbTitle}"`);
         return [];
     }
 

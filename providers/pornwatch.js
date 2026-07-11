@@ -91,9 +91,15 @@ function getTmdbMetadata(tmdbId, mediaType) {
         return null;
       const data = yield res.json();
       const director = mediaType === "movie" ? ((_b = (_a = data.credits) == null ? void 0 : _a.crew) == null ? void 0 : _b.filter((c) => c.job === "Director")) || [] : data.created_by || [];
+      const altTitles = [];
+      if (data.original_title && data.original_title !== (data.title || data.name))
+        altTitles.push(data.original_title);
+      if (data.original_language && data.title !== data.original_title) {
+      }
       return {
         tmdb: {
           title: data.title || data.name,
+          altTitles,
           year: (data.release_date || data.first_air_date || "").split("-")[0],
           runtime: data.runtime || ((_c = data.episode_run_time) == null ? void 0 : _c[0]),
           genres: ((_d = data.genres) == null ? void 0 : _d.map((g) => g.name)) || [],
@@ -110,71 +116,88 @@ function getTmdbMetadata(tmdbId, mediaType) {
     }
   });
 }
-function normalizeTitle(title) {
-  if (!title)
-    return "";
-  const noiseWords = ["vol", "volume", "part", "season", "s", "and", "the", "a", "an"];
-  return title.toLowerCase().replace(/([a-z])([0-9])/g, "$1 $2").replace(/([0-9])([a-z])/g, "$1 $2").replace(/\[.*?\]/g, "").replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((word) => word && !noiseWords.includes(word)).join(" ").trim();
+function stripAccents(str) {
+  return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
-function getNumbers(title) {
-  const norm = normalizeTitle(title);
-  return new Set(norm.split(" ").filter((w) => /^\d+$/.test(w)));
+function normalizeVersion(t) {
+  return t.toLowerCase().replace(/\bii\b/g, " 2 ").replace(/\biii\b/g, " 3 ").replace(/\biv\b/g, " 4 ").replace(/\bv\b/g, " 5 ").replace(/\bvi\b/g, " 6 ").replace(/\bvii\b/g, " 7 ").replace(/\bviii\b/g, " 8 ").replace(/\bix\b/g, " 9 ").replace(/\bx\b/g, " 10 ");
 }
-function wordOverlapScore(titleA, titleB) {
-  const isNum = (w) => /^\d+$/.test(w);
-  const wordsA = new Set(normalizeTitle(titleA).split(" ").filter((w) => w.length > 2 || isNum(w)));
-  const wordsB = new Set(normalizeTitle(titleB).split(" ").filter((w) => w.length > 2 || isNum(w)));
-  if (wordsA.size === 0 || wordsB.size === 0)
-    return 0;
-  let intersection = 0;
-  for (const word of wordsA) {
-    if (wordsB.has(word))
-      intersection++;
+var NOISE_WORDS = ["vol", "volume", "part", "partie", "season", "saison", "ep", "episode", "s", "and", "the", "a", "an", "de", "du", "des", "la", "le", "les", "un", "une", "en", "au", "aux", "il", "je", "tu", "ma", "mon", "mes", "ton", "ta", "tes", "son", "sa", "ses", "qui", "que", "dont", "o\xF9", "et", "ou", "ne", "pas", "pour", "par", "sur", "avec", "sans", "dans"];
+function cleanTitleWords(t) {
+  const normalized = normalizeVersion(stripAccents(t));
+  return normalized.replace(/\./g, "").replace(/_/g, " ").replace(/['\u2019']/g, "").replace(/([a-z])([0-9])/g, "$1 $2").replace(/([0-9])([a-z])/g, "$1 $2").replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((word) => word && !NOISE_WORDS.includes(word));
+}
+function getNumbersFromWords(words) {
+  return words.filter((w) => /^\d+$/.test(w));
+}
+function isTitleMatch(refTitle, mirrorTitle) {
+  if (!refTitle || !mirrorTitle)
+    return false;
+  const w1 = cleanTitleWords(refTitle);
+  const w2 = cleanTitleWords(mirrorTitle);
+  if (w1.length === 0 || w2.length === 0)
+    return false;
+  const n1 = getNumbersFromWords(w1);
+  const n2 = getNumbersFromWords(w2);
+  if (n1.length > 0 || n2.length > 0) {
+    if (n1.length !== n2.length)
+      return false;
+    if (!n1.every((v, i) => v === n2[i]))
+      return false;
   }
-  const union = (/* @__PURE__ */ new Set([...wordsA, ...wordsB])).size;
-  return intersection / union;
+  const lenDiff = Math.abs(w1.length - w2.length);
+  const maxLen = Math.max(w1.length, w2.length);
+  if (lenDiff / maxLen > 0.4)
+    return false;
+  const norm = (words) => words.map((w) => w.length > 3 && w.endsWith("s") ? w.slice(0, -1) : w);
+  const nw1 = norm(w1);
+  const nw2 = norm(w2);
+  const containsAll = (source, target) => target.every((word) => source.includes(word));
+  const shorterNw = nw1.length <= nw2.length ? nw1 : nw2;
+  const longerNw = nw1.length <= nw2.length ? nw2 : nw1;
+  if (containsAll(longerNw, shorterNw)) {
+    if (shorterNw.length >= 3 || longerNw.length - shorterNw.length <= 1)
+      return true;
+  }
+  if (containsAll(nw1, nw2) || containsAll(nw2, nw1)) {
+    const sLen = Math.min(nw1.length, nw2.length);
+    const lLen = Math.max(nw1.length, nw2.length);
+    if (sLen >= 3 || lLen - sLen <= 1)
+      return true;
+  }
+  const joined1 = nw1.join("");
+  const joined2 = nw2.join("");
+  if (joined1 === joined2)
+    return true;
+  if (joined1.length > 5 && joined2.length > 5 && (joined1.startsWith(joined2) || joined2.startsWith(joined1)))
+    return true;
+  if (nw1.length >= 3 && nw2.length >= 3 && Math.abs(nw1.length - nw2.length) <= 1) {
+    const shorter = nw1.length <= nw2.length ? nw1 : nw2;
+    const longer = nw1.length <= nw2.length ? nw2 : nw1;
+    const shorterJoined = shorter.join(" ");
+    const longerJoined = longer.join(" ");
+    if (shorterJoined.length > 5 && longerJoined.includes(shorterJoined))
+      return true;
+  }
+  return false;
 }
-function findBestMatch(tmdbTitle, searchResults, threshold = 0.5, referenceYear = null) {
+function findBestMatch(tmdbTitle, searchResults, referenceYear = null, altTitles = []) {
   if (!tmdbTitle || !searchResults || searchResults.length === 0)
     return null;
-  let best = null;
-  let bestScore = -1;
-  const normTmdb = normalizeTitle(tmdbTitle);
-  const tmdbNums = getNumbers(tmdbTitle);
-  const tmdbWords = normTmdb.split(/\s+/).filter((w) => w.length > 0);
+  const refTitles = [tmdbTitle, ...altTitles];
   for (const result of searchResults) {
     const siteTitle = result.title || "";
-    const normSite = normalizeTitle(siteTitle);
     if (referenceYear) {
       const yearInSite = siteTitle.match(/\b(19|20)\d{2}\b/);
       if (yearInSite && yearInSite[0] !== String(referenceYear)) {
         continue;
       }
     }
-    if (normTmdb === normSite)
-      return { result, score: 1 };
-    const siteWords = normSite.split(/\s+/).filter((w) => w.length > 0);
-    const wordCountRatio = Math.min(tmdbWords.length, siteWords.length) / Math.max(tmdbWords.length, siteWords.length);
-    if (wordCountRatio < 0.4)
-      continue;
-    const siteNums = getNumbers(siteTitle);
-    let numMismatch = false;
-    if (tmdbNums.size > 0 && siteNums.size > 0) {
-      const intersect = new Set([...tmdbNums].filter((n) => siteNums.has(n)));
-      if (intersect.size === 0)
-        numMismatch = true;
+    for (const ref of refTitles) {
+      if (isTitleMatch(ref, siteTitle)) {
+        return { result, score: 1 };
+      }
     }
-    const overlap = wordOverlapScore(tmdbTitle, siteTitle);
-    let score = overlap;
-    if (numMismatch)
-      score -= 0.3;
-    if (score > bestScore) {
-      bestScore = score;
-      best = result;
-    }
-  }
-  if (bestScore >= threshold) {
-    return { result: best, score: bestScore };
   }
   return null;
 }
@@ -182,22 +205,12 @@ function generateQueryVariants(title) {
   if (!title)
     return [];
   const variants = [title];
-  const colonIdx = title.indexOf(":");
-  if (colonIdx > 0) {
-    variants.push(title.substring(0, colonIdx).trim());
-  }
   const cleaned = title.replace(/\s*\(\d{4}\)/g, "").trim();
   if (cleaned !== title)
     variants.push(cleaned);
-  const suffixes = ["hd", "full movie", "watch online", "free", "xxx", "parody"];
-  let slug = cleaned.toLowerCase();
-  for (const suffix of suffixes) {
-    slug = slug.replace(new RegExp(`\\s*${suffix}\\s*`, "gi"), " ");
-  }
-  slug = slug.trim();
-  if (slug !== cleaned.toLowerCase() && slug.length > 3) {
-    variants.push(slug);
-  }
+  const stripped = stripAccents(cleaned);
+  if (stripped !== cleaned)
+    variants.push(stripped);
   variants.push(cleaned.replace(/\s+/g, "-"));
   return [...new Set(variants.filter((v) => v.length >= 3))];
 }
