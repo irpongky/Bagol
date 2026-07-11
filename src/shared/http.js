@@ -110,6 +110,7 @@ export function findBestMatch(tmdbTitle, searchResults, threshold = 0.5, referen
     let bestScore = -1;
     const normTmdb = normalizeTitle(tmdbTitle);
     const tmdbNums = getNumbers(tmdbTitle);
+    const tmdbWords = normTmdb.split(/\s+/).filter(w => w.length > 0);
     
     for (const result of searchResults) {
         const siteTitle = result.title || '';
@@ -124,6 +125,11 @@ export function findBestMatch(tmdbTitle, searchResults, threshold = 0.5, referen
         }
 
         if (normTmdb === normSite) return { result, score: 1.0 };
+        
+        // 2. WORD-COUNT GUARD: reject if word count differs by more than 2x
+        const siteWords = normSite.split(/\s+/).filter(w => w.length > 0);
+        const wordCountRatio = Math.min(tmdbWords.length, siteWords.length) / Math.max(tmdbWords.length, siteWords.length);
+        if (wordCountRatio < 0.4) continue; // Too different in length
         
         const siteNums = getNumbers(siteTitle);
         let numMismatch = false;

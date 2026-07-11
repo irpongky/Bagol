@@ -106,11 +106,13 @@ async function run() {
             const { getStreams } = require(providerPath);
             
             // Search query for testing
-            const testQuery = "Avatar"; 
+            // Sample uses real adult content that actually exists on these providers'
+            // upstream sites, so the strict title/year matcher can produce a positive match.
+            const testQuery = "Step Siblings with Benefits 2";
             console.log(`  ${ICONS.gear} Searching for "${testQuery}" via ${p.name}...`);
-            
-            // Using "Avatar" (2009) - TMDB 19995
-            const streams = await getStreams("19995", "movie");
+
+            // Using "Step Siblings with Benefits 2" (2020) - TMDB 839733
+            const streams = await getStreams("839733", "movie");
             
             streamCount = streams.length;
             if (streamCount > 0) {

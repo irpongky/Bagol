@@ -141,6 +141,7 @@ function findBestMatch(tmdbTitle, searchResults, threshold = 0.5, referenceYear 
   let bestScore = -1;
   const normTmdb = normalizeTitle(tmdbTitle);
   const tmdbNums = getNumbers(tmdbTitle);
+  const tmdbWords = normTmdb.split(/\s+/).filter((w) => w.length > 0);
   for (const result of searchResults) {
     const siteTitle = result.title || "";
     const normSite = normalizeTitle(siteTitle);
@@ -152,6 +153,10 @@ function findBestMatch(tmdbTitle, searchResults, threshold = 0.5, referenceYear 
     }
     if (normTmdb === normSite)
       return { result, score: 1 };
+    const siteWords = normSite.split(/\s+/).filter((w) => w.length > 0);
+    const wordCountRatio = Math.min(tmdbWords.length, siteWords.length) / Math.max(tmdbWords.length, siteWords.length);
+    if (wordCountRatio < 0.4)
+      continue;
     const siteNums = getNumbers(siteTitle);
     let numMismatch = false;
     if (tmdbNums.size > 0 && siteNums.size > 0) {
@@ -1337,6 +1342,13 @@ function getVideoLinks(pageUrl) {
       }
     }
     if (!links.size) {
+      $("li[data-fl-url]").each((_, el) => {
+        const href = $(el).attr("data-fl-url");
+        if (href && href.startsWith("http"))
+          links.add(href);
+      });
+    }
+    if (!links.size) {
       $("a[href]").each((_, el) => {
         const href = $(el).attr("href") || "";
         if (href.startsWith("http") && isKnownEmbedHost(href))
@@ -1361,7 +1373,7 @@ function extractStreams(tmdbId, mediaType, season, episode) {
       return [];
     let bestResult = null;
     if (tmdbTitle) {
-      const match = findBestMatch(tmdbTitle, uniqueResults, 0.4, referenceYear);
+      const match = findBestMatch(tmdbTitle, uniqueResults, 0.55, referenceYear);
       if (match) {
         bestResult = match.result;
         console.log(`[Mangoporn] Best match: "${bestResult.title}" (score: ${match.score.toFixed(2)})`);

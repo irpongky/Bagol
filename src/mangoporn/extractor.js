@@ -63,6 +63,14 @@ async function getVideoLinks(pageUrl) {
         }
     }
 
+    // Also try data-fl-url attributes (Flaresolverr/CMS player links)
+    if (!links.size) {
+        $('li[data-fl-url]').each((_, el) => {
+            const href = $(el).attr('data-fl-url');
+            if (href && href.startsWith('http')) links.add(href);
+        });
+    }
+
     if (!links.size) {
         $('a[href]').each((_, el) => {
             const href = $(el).attr('href') || '';
@@ -93,7 +101,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     let bestResult = null;
 
     if (tmdbTitle) {
-        const match = findBestMatch(tmdbTitle, uniqueResults, 0.4, referenceYear);
+        const match = findBestMatch(tmdbTitle, uniqueResults, 0.55, referenceYear);
         if (match) {
             bestResult = match.result;
             console.log(`[Mangoporn] Best match: "${bestResult.title}" (score: ${match.score.toFixed(2)})`);
